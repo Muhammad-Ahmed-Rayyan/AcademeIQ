@@ -40,9 +40,10 @@ app.add_middleware(
 )
 
 # Import and include routes
-from app.routes import auth
+from app.routes import auth, chat
 
 app.include_router(auth.router)
+app.include_router(chat.router)
 
 @app.get("/")
 def read_root():
