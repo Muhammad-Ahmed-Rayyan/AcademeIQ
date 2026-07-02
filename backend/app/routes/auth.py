@@ -53,7 +53,12 @@ async def login(request: Request):
     # Real Google OAuth flow
     # Generate redirect URI
     redirect_uri = REDIRECT_URI
-    return await oauth.google.authorize_redirect(request, redirect_uri)
+    return await oauth.google.authorize_redirect(
+        request, 
+        redirect_uri, 
+        access_type="offline", 
+        prompt="consent"
+    )
 
 @router.get("/callback")
 async def callback(request: Request, mock: bool = False, code: str = None):
@@ -69,9 +74,18 @@ async def callback(request: Request, mock: bool = False, code: str = None):
             "provider": "mock"
         }
         # In mock mode, we also mock Google tokens so they are present in session
-        request.session["google_tokens"] = {
+        request.session["google_token"] = {
             "access_token": "mock_access_token_xyz_123",
             "refresh_token": "mock_refresh_token_xyz_123",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "client_id": CLIENT_ID or "mock_client_id",
+            "client_secret": CLIENT_SECRET or "mock_client_secret",
+            "scopes": [
+                "openid", "email", "profile", 
+                "https://www.googleapis.com/auth/calendar", 
+                "https://www.googleapis.com/auth/gmail.modify", 
+                "https://www.googleapis.com/auth/drive"
+            ],
             "expires_at": 9999999999
         }
         # Redirect to dashboard
@@ -93,9 +107,18 @@ async def callback(request: Request, mock: bool = False, code: str = None):
             "avatar": user_info.get("picture"),
             "provider": "google"
         }
-        request.session["google_tokens"] = {
+        request.session["google_token"] = {
             "access_token": token.get("access_token"),
             "refresh_token": token.get("refresh_token"),
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "client_id": CLIENT_ID,
+            "client_secret": CLIENT_SECRET,
+            "scopes": token.get("scope", "").split(" ") if token.get("scope") else [
+                "openid", "email", "profile", 
+                "https://www.googleapis.com/auth/calendar", 
+                "https://www.googleapis.com/auth/gmail.modify", 
+                "https://www.googleapis.com/auth/drive"
+            ],
             "expires_at": token.get("expires_at")
         }
         

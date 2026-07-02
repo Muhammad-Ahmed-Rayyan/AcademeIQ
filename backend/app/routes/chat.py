@@ -4,34 +4,14 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from app.services.gemini import GeminiService
+from app.services.google_api import GoogleApiService
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
-# In-memory session store (dictionary) to store large session variables (like history & audit logs)
-# This prevents hitting cookie size limits (4KB) and allows updates within SSE streams.
-SESSION_STORE = {}
+from app.utils.session import get_or_create_session, log_audit_action
 
 class ChatRequest(BaseModel):
     message: str
-
-def get_or_create_session(request: Request) -> dict:
-    """
-    Retrieves or initializes the in-memory session data for the user.
-    """
-    # Ensure there is a session ID in the Starlette session cookie
-    session_id = request.session.get("session_id")
-    if not session_id:
-        session_id = str(uuid.uuid4())
-        request.session["session_id"] = session_id
-
-    # Initialize data structure if not already present
-    if session_id not in SESSION_STORE:
-        SESSION_STORE[session_id] = {
-            "conversation_history": [],
-            "audit_log": [],
-            "pending_actions": {}
-        }
-    return SESSION_STORE[session_id]
 
 @router.post("/chat")
 async def chat(request: Request, body: ChatRequest):
@@ -46,14 +26,25 @@ async def chat(request: Request, body: ChatRequest):
     # Append user message to history immediately
     history.append({"sender": "user", "text": user_message})
 
-    # Instantiate Gemini service
+    # Instantiate Gemini and Google API services
     gemini_service = GeminiService()
+    
+    user = request.session.get("user", {})
+    google_token = request.session.get("google_token", {})
+    is_mock = user.get("provider", "mock") == "mock" or not google_token.get("access_token")
+    
+    google_service = GoogleApiService(google_token=google_token, is_mock=is_mock)
 
     async def event_generator():
         full_response = ""
         try:
-            # Stream response chunks from Gemini service
-            async for chunk in gemini_service.generate_chat_stream(history[:-1], user_message):
+            # Stream response chunks from Gemini service passing Google API context
+            async for chunk in gemini_service.generate_chat_stream(
+                history=history[:-1], 
+                new_message=user_message,
+                google_service=google_service,
+                request=request
+            ):
                 full_response += chunk
                 yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
             

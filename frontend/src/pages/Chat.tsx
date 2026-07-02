@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Send, Sparkles, MessageSquare, ShieldAlert, Trash2, Loader2 } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
+import { useLocation } from 'react-router-dom';
 
 interface Message {
   sender: 'user' | 'agent';
@@ -31,9 +32,20 @@ export const Chat: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
+  const location = useLocation();
+
   useEffect(() => {
     scrollToBottom();
   }, [messages, isTyping]);
+
+  // Prefill initial message if navigated from quick actions on dashboard
+  useEffect(() => {
+    if (location.state?.initialMessage) {
+      setInputValue(location.state.initialMessage);
+      // Clear state so it doesn't prefill again on reload
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -114,7 +126,10 @@ export const Chat: React.FC = () => {
                   const updated = [...prev];
                   const lastMsg = updated[updated.length - 1];
                   if (lastMsg && lastMsg.sender === 'agent') {
-                    lastMsg.text += chunkContent;
+                    updated[updated.length - 1] = {
+                      ...lastMsg,
+                      text: lastMsg.text + chunkContent
+                    };
                   }
                   return updated;
                 });
@@ -126,7 +141,10 @@ export const Chat: React.FC = () => {
                   const updated = [...prev];
                   const lastMsg = updated[updated.length - 1];
                   if (lastMsg && lastMsg.sender === 'agent') {
-                    lastMsg.text += `\n\n*(Error: ${payload.content})*`;
+                    updated[updated.length - 1] = {
+                      ...lastMsg,
+                      text: lastMsg.text + `\n\n*(Error: ${payload.content})*`
+                    };
                   }
                   return updated;
                 });

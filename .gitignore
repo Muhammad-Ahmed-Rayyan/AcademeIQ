@@ -73,3 +73,11 @@ jwt*.key
 # OS
 .DS_Store
 Thumbs.db
+
+# Databases & Logs
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.log.*
+
