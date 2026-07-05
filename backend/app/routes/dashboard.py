@@ -1,6 +1,7 @@
 import datetime
 import re
 from fastapi import APIRouter, Request, HTTPException
+from pydantic import BaseModel
 from app.services.google_api import GoogleApiService
 
 from app.utils.session import log_audit_action, get_or_create_session
@@ -47,33 +48,49 @@ def get_google_service(request: Request) -> GoogleApiService:
 @router.get("/schedule/today")
 async def get_today_schedule(request: Request):
     """
-    Fetches today's schedule events from Calendar.
+    Fetches today's schedule events from Calendar, supporting both timed and all-day events.
+    Computes date matching using the user's system timezone.
     """
     try:
         service = get_google_service(request)
         log_audit_action(request, "READ_CALENDAR", "Dashboard: Retrieved today's class schedule", status="auto", details="Loaded Today's Schedule panel data")
         events = service.list_calendar_events()
         
-        # Filter events happening today (in user's timezone or simple filter for mock)
+        # Filter events happening today
         now = datetime.datetime.now()
+        today_date_str = now.strftime("%Y-%m-%d")
         today_events = []
+        
         for event in events:
-            start_dateTime = event.get("start", {}).get("dateTime", "")
-            if not start_dateTime:
+            start = event.get("start", {})
+            start_val = start.get("dateTime") or start.get("date")
+            if not start_val:
                 continue
             
-            # Simple check if event starts today (e.g. comparing YYYY-MM-DD prefix)
-            event_date = start_dateTime.split("T")[0]
-            today_date = now.strftime("%Y-%m-%d")
+            # Extract date in system local timezone
+            event_date_str = ""
+            if "T" in start_val:
+                try:
+                    # Timezone aware parsing
+                    dt = datetime.datetime.fromisoformat(start_val.replace("Z", "+00:00"))
+                    local_dt = dt.astimezone() # converts to local system timezone
+                    event_date_str = local_dt.strftime("%Y-%m-%d")
+                except Exception as ex:
+                    print(f"Error parsing event datetime {start_val}: {ex}")
+                    event_date_str = start_val.split("T")[0]
+            else:
+                # All-day event (YYYY-MM-DD)
+                event_date_str = start_val
             
-            # If mock, we return a few mock events relative to today anyway
-            if service.is_mock or event_date == today_date:
+            if service.is_mock or event_date_str == today_date_str:
+                start_time = event.get("start", {}).get("dateTime") or event.get("start", {}).get("date") or ""
+                end_time = event.get("end", {}).get("dateTime") or event.get("end", {}).get("date") or ""
                 today_events.append({
                     "id": event.get("id"),
                     "title": event.get("summary", "Untitled Session"),
                     "description": event.get("description", ""),
-                    "start_time": start_dateTime,
-                    "end_time": event.get("end", {}).get("dateTime", ""),
+                    "start_time": start_time,
+                    "end_time": end_time,
                     "category": "Class" if "Class" in event.get("summary", "") else "Lab" if "Lab" in event.get("summary", "") else "Study Block"
                 })
         
@@ -293,5 +310,113 @@ async def get_email_digest(request: Request, sync: bool = False):
 
         return {"digest": digest, "cached": False}
 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class StudyPlanRequest(BaseModel):
+    exam_title: str
+    exam_date: str
+    course_code: str
+    hours_per_day: int = 2
+
+@router.post("/study-plan")
+async def create_study_plan_endpoint(request: Request, body: StudyPlanRequest):
+    """
+    Generates a day-by-day study plan avoiding calendar conflicts and creates a pending action.
+    """
+    try:
+        service = get_google_service(request)
+        
+        # 1. Fetch calendar events between now and the exam date
+        events = service.list_calendar_events()
+        
+        # 2. Call Gemini to generate conflicts-free study blocks
+        from app.services.gemini import GeminiService
+        gemini = GeminiService()
+        
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d")
+        prompt = f"""
+        Design a day-by-day study plan for the exam: "{body.exam_title}" ({body.course_code}) scheduled on {body.exam_date}.
+        The current date is {now_str}.
+        The user wants to study {body.hours_per_day} hours per day.
+        
+        Existing Busy Calendar Events:
+        {json.dumps(events) if 'events' in locals() else '[]'}
+        
+        Schedule study sessions only in the remaining free slots, preferably in the evening (between 4 PM and 9 PM).
+        For each day from today until the day before the exam, generate a study block.
+        Avoid conflicts with any busy times in the existing calendar events list.
+        
+        Conform EXACTLY to this JSON format:
+        {{
+            "events": [
+                {{
+                    "summary": "[AcademeIQ] Study Block - {body.course_code}",
+                    "start_time": "ISO-8601-datetime-string",
+                    "end_time": "ISO-8601-datetime-string",
+                    "description": "Topics: Course review, problem solving"
+                }}
+            ]
+        }}
+        """
+        
+        from google.genai import types
+        import json
+        
+        if gemini.is_mock:
+            # Generate mock study plan events
+            now = datetime.datetime.now()
+            proposed_events = []
+            for i in range(1, 4):
+                day = now + datetime.timedelta(days=i)
+                start_iso = day.replace(hour=17, minute=0, second=0).isoformat()
+                end_iso = day.replace(hour=19, minute=0, second=0).isoformat()
+                proposed_events.append({
+                    "summary": f"[AcademeIQ] Study Block - {body.course_code}",
+                    "start_time": start_iso,
+                    "end_time": end_iso,
+                    "description": f"Topics: Course review, exam preparation session {i}"
+                })
+        else:
+            response = gemini.client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.2
+                )
+            )
+            data = json.loads(response.text)
+            proposed_events = data.get("events", [])
+        
+        # 3. Create a pending action in the session
+        import uuid
+        action_id = f"act_{uuid.uuid4().hex[:8]}"
+        
+        # Map proposed events to prompt schema: title, start, end
+        mapped_events = []
+        for ev in proposed_events:
+            mapped_events.append({
+                "title": ev.get("summary") or ev.get("title") or f"[AcademeIQ] Study Block - {body.course_code}",
+                "start": ev.get("start_time") or ev.get("start") or "",
+                "end": ev.get("end_time") or ev.get("end") or "",
+                "description": ev.get("description", "")
+            })
+            
+        session = get_or_create_session(request)
+        session["pending_actions"][action_id] = {
+            "action_type": "CREATE_CALENDAR_EVENTS",
+            "description": f"Create study plan events for {body.course_code}",
+            "args": {"events": mapped_events},
+            "status": "pending"
+        }
+        
+        return {
+            "action_id": action_id,
+            "action_type": "CREATE_CALENDAR_EVENTS",
+            "description": f"Create study plan events for {body.course_code}",
+            "preview": {"events": mapped_events}
+        }
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

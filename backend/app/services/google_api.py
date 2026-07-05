@@ -219,3 +219,97 @@ class GoogleApiService:
         except Exception as e:
             print(f"Drive list API error: {e}")
             return []
+
+    # --- WRITE OPERATIONS ---
+    def create_calendar_event(self, summary: str, start_time: str, end_time: str, description: str = "") -> dict:
+        """
+        Creates a new calendar event.
+        """
+        if self.is_mock:
+            return {
+                "status": "success",
+                "id": f"mock_event_{int(datetime.datetime.now().timestamp())}",
+                "summary": summary,
+                "start": {"dateTime": start_time},
+                "end": {"dateTime": end_time},
+                "description": description
+            }
+        try:
+            event_body = {
+                'summary': summary,
+                'description': description,
+                'start': {'dateTime': start_time},
+                'end': {'dateTime': end_time}
+            }
+            res = self.calendar_client.events().insert(calendarId='primary', body=event_body).execute()
+            return res
+        except Exception as e:
+            print(f"Error creating calendar event: {e}")
+            raise e
+
+    def send_gmail_message(self, to: str, subject: str, body: str) -> dict:
+        """
+        Sends an email message.
+        """
+        if self.is_mock:
+            return {
+                "status": "success",
+                "id": f"mock_msg_{int(datetime.datetime.now().timestamp())}",
+                "to": to,
+                "subject": subject
+            }
+        try:
+            import base64
+            from email.mime.text import MIMEText
+            message = MIMEText(body)
+            message['to'] = to
+            message['subject'] = subject
+            raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+            res = self.gmail_client.users().messages().send(userId='me', body={'raw': raw}).execute()
+            return res
+        except Exception as e:
+            print(f"Error sending email: {e}")
+            raise e
+
+    def create_gmail_draft(self, to: str, subject: str, body: str) -> dict:
+        """
+        Creates an email draft.
+        """
+        if self.is_mock:
+            return {
+                "status": "success",
+                "id": f"mock_draft_{int(datetime.datetime.now().timestamp())}",
+                "to": to,
+                "subject": subject
+            }
+        try:
+            import base64
+            from email.mime.text import MIMEText
+            message = MIMEText(body)
+            message['to'] = to
+            message['subject'] = subject
+            raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+            res = self.gmail_client.users().drafts().create(userId='me', body={'message': {'raw': raw}}).execute()
+            return res
+        except Exception as e:
+            print(f"Error creating draft: {e}")
+            raise e
+
+    def create_drive_file(self, filename: str, content: str, mime_type: str = "text/plain") -> dict:
+        """
+        Creates a new file in Google Drive.
+        """
+        if self.is_mock:
+            return {
+                "status": "success",
+                "id": f"mock_file_{int(datetime.datetime.now().timestamp())}",
+                "name": filename
+            }
+        try:
+            from googleapiclient.http import MediaByteArrayUpload
+            media = MediaByteArrayUpload(content.encode('utf-8'), mimetype=mime_type, resumable=True)
+            res = self.drive_client.files().create(body={'name': filename}, media_body=media, fields='id').execute()
+            return res
+        except Exception as e:
+            print(f"Error creating drive file: {e}")
+            raise e

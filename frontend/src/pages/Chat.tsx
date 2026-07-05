@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Send, Sparkles, MessageSquare, ShieldAlert, Trash2, Loader2 } from 'lucide-react';
+import { Send, Sparkles, MessageSquare, ShieldAlert, Trash2, Loader2, Shield, Check, X, Edit2 } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { useLocation } from 'react-router-dom';
 
@@ -9,6 +9,25 @@ interface Message {
   text: string;
   timestamp: string;
 }
+
+const formatEventDateTime = (startStr: string, endStr: string) => {
+  try {
+    const start = new Date(startStr);
+    const end = new Date(endStr);
+    if (isNaN(start.getTime())) return startStr;
+    
+    const dayOptions: Intl.DateTimeFormatOptions = { weekday: 'short', month: 'short', day: 'numeric' };
+    const timeOptions: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit', hour12: true };
+    
+    const dayPart = start.toLocaleDateString('en-US', dayOptions);
+    const startTimePart = start.toLocaleTimeString('en-US', timeOptions);
+    const endTimePart = !isNaN(end.getTime()) ? end.toLocaleTimeString('en-US', timeOptions) : '';
+    
+    return `${dayPart} · ${startTimePart}${endTimePart ? ` – ${endTimePart}` : ''}`;
+  } catch (e) {
+    return `${startStr} - ${endStr}`;
+  }
+};
 
 export const Chat: React.FC = () => {
   const { user, mode } = useAuthStore();
@@ -22,8 +41,51 @@ export const Chat: React.FC = () => {
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
+  const [pendingAction, setPendingAction] = useState<any | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedPreview, setEditedPreview] = useState<any>({});
+  const [toast, setToast] = useState<{ type: 'success' | 'error', message: string } | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Recover pending action on mount/refresh
+  useEffect(() => {
+    const recoverPendingAction = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/actions/pending`, {
+          credentials: 'include'
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (data.pending_actions && data.pending_actions.length > 0) {
+            const action = data.pending_actions[0];
+            setPendingAction({
+              actionId: action.action_id,
+              actionType: action.action_type,
+              description: action.description,
+              preview: action.preview
+            });
+          }
+        }
+      } catch (err) {
+        console.error("Failed to recover pending actions:", err);
+      }
+    };
+    recoverPendingAction();
+  }, []);
+
+  // Intercept Escape key when modal is open to block closing it
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && pendingAction) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [pendingAction]);
 
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
@@ -106,8 +168,8 @@ export const Chat: React.FC = () => {
 
         buffer += decoder.decode(value, { stream: true });
         
-        // Parse server-sent events split by double newlines
-        const lines = buffer.split('\n\n');
+        // Parse server-sent events split by line boundaries
+        const lines = buffer.split(/\r?\n/);
         // Keep the last partial element in the buffer
         buffer = lines.pop() || '';
 
@@ -115,9 +177,11 @@ export const Chat: React.FC = () => {
           const trimmedLine = line.trim();
           if (!trimmedLine) continue;
 
-          if (trimmedLine.startsWith('data: ')) {
+          if (trimmedLine.startsWith('data:')) {
             try {
-              const payload = JSON.parse(trimmedLine.slice(6));
+              const dataStr = trimmedLine.slice(trimmedLine.indexOf(':') + 1).trim();
+              if (!dataStr) continue;
+              const payload = JSON.parse(dataStr);
               
               if (payload.type === 'text') {
                 const chunkContent = payload.content;
@@ -132,6 +196,14 @@ export const Chat: React.FC = () => {
                     };
                   }
                   return updated;
+                });
+              } else if (payload.type === 'pending_action') {
+                console.log('MODAL TRIGGER:', payload); // ADD THIS
+                setPendingAction({
+                  actionId: payload.action_id,
+                  actionType: payload.action_type,
+                  description: payload.description,
+                  preview: payload.preview
                 });
               } else if (payload.type === 'done') {
                 // Done event
@@ -166,6 +238,82 @@ export const Chat: React.FC = () => {
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
       setMessages(prev => [...prev, errorMessage]);
+    }
+  };
+
+  const handleConfirmAction = async (decision: 'approved' | 'rejected') => {
+    if (!pendingAction) return;
+    setConfirming(true);
+    try {
+      const payload: any = {
+        action_id: pendingAction.actionId,
+        decision: decision
+      };
+      if (decision === 'approved' && isEditing) {
+        payload.modified_data = editedPreview;
+      }
+      
+      const response = await fetch(`${API_BASE_URL}/api/actions/confirm`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload),
+        credentials: 'include'
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Failed to execute action');
+      }
+      
+      const data = await response.json();
+      if (data.status === 'success' || data.status === 'rejected') {
+        // Build a specific, meaningful toast
+        let toastMsg = 'Action cancelled.';
+        if (data.status === 'success') {
+          const result = data.result || {};
+          if (pendingAction.actionType === 'CREATE_CALENDAR_EVENTS') {
+            const count = result.created_count ?? (pendingAction.preview?.events?.length ?? 1);
+            toastMsg = `${count} event${count !== 1 ? 's' : ''} added to your calendar`;
+          } else if (pendingAction.actionType === 'SEND_EMAIL') {
+            toastMsg = 'Email sent successfully';
+          } else if (pendingAction.actionType === 'CREATE_DRAFT') {
+            toastMsg = 'Draft saved to Gmail';
+          } else if (pendingAction.actionType === 'SAVE_TO_DRIVE') {
+            toastMsg = `File saved to Google Drive`;
+          } else {
+            toastMsg = 'Action executed successfully';
+          }
+        }
+
+        setToast({
+          type: data.status === 'success' ? 'success' : 'error',
+          message: toastMsg
+        });
+        
+        setMessages(prev => [
+          ...prev,
+          {
+            sender: 'agent',
+            text: data.status === 'success'
+              ? `*✓ Done:* ${toastMsg}.`
+              : `*✕ Rejected:* ${pendingAction.description} was cancelled.`,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          }
+        ]);
+      }
+    } catch (err: any) {
+      console.error("Action confirmation failed:", err);
+      setToast({
+        type: 'error',
+        message: `Action execution failed: ${err.message}`
+      });
+    } finally {
+      setConfirming(false);
+      setPendingAction(null);
+      setIsEditing(false);
+      setTimeout(() => setToast(null), 4000);
     }
   };
 
@@ -312,7 +460,7 @@ export const Chat: React.FC = () => {
               type="text"
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
-              disabled={isTyping}
+              disabled={isTyping || !!pendingAction}
               placeholder="Ask AcademeIQ to check deadlines, draft email extensions..."
               className="w-full h-11 bg-surface border border-border rounded-md px-4 pr-10 text-[13px] text-text-primary placeholder-text-disabled focus:outline-none focus:border-primary disabled:opacity-50 transition-colors duration-150"
             />
@@ -322,13 +470,306 @@ export const Chat: React.FC = () => {
           </div>
           <button
             type="submit"
-            disabled={!inputValue.trim() || isTyping}
+            disabled={!inputValue.trim() || isTyping || !!pendingAction}
             className="w-11 h-11 bg-primary hover:bg-primary-hover disabled:bg-primary/45 disabled:text-text-disabled text-text-primary flex items-center justify-center rounded-md active:scale-95 transition-all duration-120 focus:outline-none"
           >
             <Send className="w-4 h-4" />
           </button>
         </form>
       </div>
+
+      {/* Toast Notification */}
+      {toast && (
+        <div className={`fixed bottom-5 right-5 z-50 flex items-center gap-2.5 px-4 py-3 rounded-lg shadow-lg border select-none ${
+          toast.type === 'success' 
+            ? 'bg-success/15 border-success/30 text-success' 
+            : 'bg-danger/15 border-danger/30 text-danger'
+        }`}>
+          <div className="font-semibold text-xs tracking-wide">
+            {toast.message}
+          </div>
+        </div>
+      )}
+
+      {/* Action Preview Modal */}
+      {pendingAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 select-none">
+          <div className="bg-surface border border-border rounded-xl shadow-2xl w-full max-w-xl flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center gap-3 p-4 bg-background border-b border-border">
+              <Shield className="w-5 h-5 text-primary" />
+              <div className="flex-1">
+                <h3 className="text-sm font-bold text-text-primary tracking-tight">Security Review Required</h3>
+                <p className="text-[11px] text-text-secondary">{pendingAction.description || 'AcademeIQ is requesting permission to execute a write action.'}</p>
+              </div>
+            </div>
+
+            {/* Content Preview */}
+            <div className="flex-1 p-5 space-y-4 overflow-y-auto max-h-[350px]">
+              <div className="flex items-center justify-between text-xs border-b border-border/50 pb-2">
+                <span className="text-text-secondary font-mono">ACTION TYPE:</span>
+                <span className="font-mono px-2 py-0.5 bg-border text-text-primary rounded text-[10px] uppercase font-bold">
+                  {pendingAction.actionType}
+                </span>
+              </div>
+
+              {/* Form / Details */}
+              <div className="space-y-3">
+                {/* Email / Draft Preview */}
+                {(pendingAction.actionType === 'SEND_EMAIL' || pendingAction.actionType === 'CREATE_DRAFT') && (
+                  <div className="space-y-2.5 text-xs">
+                    <div>
+                      <span className="block text-text-secondary mb-1">Recipient (To):</span>
+                      {isEditing ? (
+                        <input
+                          type="text"
+                          value={editedPreview.to || ''}
+                          onChange={(e) => setEditedPreview({ ...editedPreview, to: e.target.value })}
+                          className="w-full bg-background border border-border focus:border-primary/50 focus:outline-none rounded px-2.5 py-1.5 font-sans text-text-primary"
+                        />
+                      ) : (
+                        <div className="p-2 bg-background border border-border/50 rounded font-medium text-text-primary font-mono">
+                          {pendingAction.preview.to || 'No Recipient'}
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <span className="block text-text-secondary mb-1">Subject:</span>
+                      {isEditing ? (
+                        <input
+                          type="text"
+                          value={editedPreview.subject || ''}
+                          onChange={(e) => setEditedPreview({ ...editedPreview, subject: e.target.value })}
+                          className="w-full bg-background border border-border focus:border-primary/50 focus:outline-none rounded px-2.5 py-1.5 font-sans text-text-primary"
+                        />
+                      ) : (
+                        <div className="p-2 bg-background border border-border/50 rounded font-medium text-text-primary font-semibold">
+                          {pendingAction.preview.subject || 'No Subject'}
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <span className="block text-text-secondary mb-1">Email Body:</span>
+                      {isEditing ? (
+                        <textarea
+                          rows={6}
+                          value={editedPreview.body || ''}
+                          onChange={(e) => setEditedPreview({ ...editedPreview, body: e.target.value })}
+                          className="w-full bg-background border border-border focus:border-primary/50 focus:outline-none rounded px-2.5 py-1.5 font-sans resize-none text-text-primary"
+                        />
+                      ) : (
+                        <div className="p-3 bg-background border border-border/50 rounded font-sans text-text-secondary whitespace-pre-wrap max-h-40 overflow-y-auto leading-relaxed">
+                          {pendingAction.preview.body}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Calendar Events Preview */}
+                {pendingAction.actionType === 'CREATE_CALENDAR_EVENTS' && (
+                  <div className="space-y-3">
+                    <span className="block text-xs font-semibold text-text-secondary">Proposed Calendar Events:</span>
+                    <div className="space-y-3 max-h-[220px] overflow-y-auto pr-1">
+                      {(editedPreview.events || pendingAction.preview.events || []).map((ev: any, idx: number) => (
+                        <div key={idx} className="p-3 bg-background border border-border/50 rounded-lg space-y-2">
+                          {isEditing ? (
+                            <div className="space-y-2 text-xs">
+                              <div>
+                                <span className="block text-[10px] text-text-secondary mb-0.5">Title:</span>
+                                <input
+                                  type="text"
+                                  value={ev.title || ev.summary || ''}
+                                  onChange={(e) => {
+                                    const events = [...(editedPreview.events || [])];
+                                    events[idx] = { ...events[idx], title: e.target.value };
+                                    setEditedPreview({ ...editedPreview, events });
+                                  }}
+                                  className="w-full bg-surface border border-border focus:outline-none rounded px-2.5 py-1.5 text-xs text-text-primary"
+                                />
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <span className="block text-[10px] text-text-secondary mb-0.5">Start:</span>
+                                  <input
+                                    type="text"
+                                    value={ev.start || ev.start_time || ''}
+                                    onChange={(e) => {
+                                      const events = [...(editedPreview.events || [])];
+                                      events[idx] = { ...events[idx], start: e.target.value };
+                                      setEditedPreview({ ...editedPreview, events });
+                                    }}
+                                    className="w-full bg-surface border border-border focus:outline-none rounded px-2 py-1 text-[11px] font-mono text-text-primary"
+                                  />
+                                </div>
+                                <div>
+                                  <span className="block text-[10px] text-text-secondary mb-0.5">End:</span>
+                                  <input
+                                    type="text"
+                                    value={ev.end || ev.end_time || ''}
+                                    onChange={(e) => {
+                                      const events = [...(editedPreview.events || [])];
+                                      events[idx] = { ...events[idx], end: e.target.value };
+                                      setEditedPreview({ ...editedPreview, events });
+                                    }}
+                                    className="w-full bg-surface border border-border focus:outline-none rounded px-2 py-1 text-[11px] font-mono text-text-primary"
+                                  />
+                                </div>
+                              </div>
+                              <div>
+                                <span className="block text-[10px] text-text-secondary mb-0.5">Description:</span>
+                                <textarea
+                                  rows={2}
+                                  value={ev.description || ''}
+                                  onChange={(e) => {
+                                    const events = [...(editedPreview.events || [])];
+                                    events[idx] = { ...events[idx], description: e.target.value };
+                                    setEditedPreview({ ...editedPreview, events });
+                                  }}
+                                  className="w-full bg-surface border border-border focus:outline-none rounded px-2.5 py-1.5 text-xs text-text-primary resize-none"
+                                />
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="space-y-1 text-xs">
+                              <div className="font-semibold text-text-primary">{ev.title || ev.summary}</div>
+                              <div className="text-[10px] text-text-secondary font-mono">
+                                {formatEventDateTime(ev.start || ev.start_time, ev.end || ev.end_time)}
+                              </div>
+                              {ev.description && (
+                                <div className="text-[10px] text-text-disabled leading-normal mt-0.5 whitespace-pre-wrap">{ev.description}</div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Drive File Preview */}
+                {pendingAction.actionType === 'SAVE_TO_DRIVE' && (
+                  <div className="space-y-2.5 text-xs">
+                    <div>
+                      <span className="block text-text-secondary mb-1">Filename:</span>
+                      {isEditing ? (
+                        <input
+                          type="text"
+                          value={editedPreview.filename || ''}
+                          onChange={(e) => setEditedPreview({ ...editedPreview, filename: e.target.value })}
+                          className="w-full bg-background border border-border focus:border-primary/50 focus:outline-none rounded px-2.5 py-1.5 font-sans text-text-primary"
+                        />
+                      ) : (
+                        <div className="p-2 bg-background border border-border/50 rounded font-medium text-text-primary font-mono">
+                          {pendingAction.preview.filename}
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <span className="block text-text-secondary mb-1">Mime Type:</span>
+                      {isEditing ? (
+                        <input
+                          type="text"
+                          value={editedPreview.mime_type || ''}
+                          onChange={(e) => setEditedPreview({ ...editedPreview, mime_type: e.target.value })}
+                          className="w-full bg-background border border-border focus:border-primary/50 focus:outline-none rounded px-2.5 py-1.5 font-mono text-text-primary"
+                        />
+                      ) : (
+                        <div className="p-2 bg-background border border-border/50 rounded font-mono text-text-primary text-[10px]">
+                          {pendingAction.preview.mime_type || 'text/plain'}
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <span className="block text-text-secondary mb-1">File Content:</span>
+                      {isEditing ? (
+                        <textarea
+                          rows={6}
+                          value={editedPreview.content || ''}
+                          onChange={(e) => setEditedPreview({ ...editedPreview, content: e.target.value })}
+                          className="w-full bg-background border border-border focus:border-primary/50 focus:outline-none rounded px-2.5 py-1.5 font-mono resize-none text-text-primary"
+                        />
+                      ) : (
+                        <div className="p-3 bg-background border border-border/50 rounded font-mono text-text-secondary whitespace-pre-wrap max-h-40 overflow-y-auto text-[11px] leading-relaxed">
+                          {pendingAction.preview.content}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Footer Buttons */}
+            <div className="bg-background border-t border-border p-3.5 flex justify-between select-none text-xs">
+              <button
+                disabled={confirming}
+                onClick={() => handleConfirmAction('rejected')}
+                className="flex items-center gap-1.5 px-3 py-1.5 border border-transparent hover:bg-danger/10 text-danger rounded transition-colors duration-150 disabled:opacity-50 font-semibold"
+              >
+                <X className="w-3.5 h-3.5" /> Reject
+              </button>
+
+              <div className="flex gap-2.5">
+                {!isEditing ? (
+                  <>
+                    <button
+                      disabled={confirming}
+                      onClick={() => {
+                        setEditedPreview({ ...pendingAction.preview });
+                        setIsEditing(true);
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 border border-border text-text-primary bg-background hover:bg-border/30 rounded transition-colors duration-150"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" /> Edit
+                    </button>
+                    <button
+                      disabled={confirming}
+                      onClick={() => handleConfirmAction('approved')}
+                      className="flex items-center gap-1.5 px-4 py-1.5 bg-primary hover:bg-primary-hover text-white font-semibold rounded shadow transition-all duration-150 active:scale-95 disabled:opacity-50"
+                    >
+                      {confirming ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Confirming...
+                        </>
+                      ) : (
+                        <>
+                          <Check className="w-3.5 h-3.5" /> Approve
+                        </>
+                      )}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      disabled={confirming}
+                      onClick={() => setIsEditing(false)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 border border-border text-text-primary bg-background hover:bg-border/30 rounded transition-colors duration-150"
+                    >
+                      Cancel Edit
+                    </button>
+                    <button
+                      disabled={confirming}
+                      onClick={() => handleConfirmAction('approved')}
+                      className="flex items-center gap-1.5 px-4 py-1.5 bg-primary hover:bg-primary-hover text-white font-semibold rounded shadow transition-all duration-150 active:scale-95 disabled:opacity-50"
+                    >
+                      {confirming ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Confirming...
+                        </>
+                      ) : (
+                        <>
+                          <Check className="w-3.5 h-3.5" /> Confirm Edit
+                        </>
+                      )}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -2,23 +2,41 @@ import os
 import time
 import json
 import asyncio
+import datetime
 from typing import AsyncGenerator, List, Dict
 from google import genai
 from google.genai import types
 from fastapi import Request
-from app.utils.session import log_audit_action
+from app.utils.session import log_audit_action, get_or_create_session
 from app.services.google_api import GoogleApiService
+import uuid
 
-SYSTEM_PROMPT = """You are AcademeIQ, a personal academic concierge agent designed for university students. 
-You act as a knowledgeable, supportive, and precise academic peer—not a generic corporate assistant. 
+SYSTEM_PROMPT = """You are AcademeIQ, a personal academic concierge agent designed for university students.
+You act as a knowledgeable, supportive, and precise academic peer—not a generic corporate assistant.
 
-Your core rules of engagement:
-1. SECURITY & CONFIRMATION: Never execute any write action (such as sending an email, creating calendar events, or deleting/modifying Google Drive files) without showing a structured preview and explicitly asking for approval first. Currently, you are only in Phase 3 (reading and dashboard retrieval mode), so no writes are supported yet.
-2. STRUCTURED ANSWERS: When the user asks for summaries of deadlines, emails, or schedules, present them in clear, structured lists or tables. Use markdown formatting to make the content readable and premium.
-3. PERSONALITY: Be direct, clear, and academically focused. Do not use emojis in your responses. Keep responses concise and practical. 
-4. CLARIFICATION: If a request is vague, ask clarifying questions instead of guessing.
+CRITICAL TOOL USAGE RULES - YOU MUST FOLLOW THESE EXACTLY:
+1. When the user asks to create a study plan, schedule study sessions, or block study time — you MUST call the `create_study_plan` tool. Do NOT describe what you would do. Do NOT say "I will create". CALL THE TOOL IMMEDIATELY after collecting exam_title, exam_date, and course_code.
+2. When the user asks to send an email or draft an email — you MUST call `send_gmail_message` or `create_gmail_draft` tool. Do NOT write the email in chat text. CALL THE TOOL.
+3. When the user asks to block time, create an event, or schedule something — you MUST call `create_calendar_event` tool. CALL THE TOOL.
+4. Never describe an action in text when you have a tool for it. Always prefer calling the tool over explaining what you would do.
+5. After calling a write tool, the system intercepts it automatically and shows the user an approval dialog. Tell the user "I have prepared the action for your review." Do NOT say "click approve in the preview dialog" — the system handles this.
 
-You are equipped with Google API tools to retrieve calendar events, emails, and files. Use them whenever you need to answer questions about the user's academic schedule, deadlines, unread messages, or study files.
+Your core rules:
+1. SECURITY: The system automatically intercepts all write tool calls and requires user approval before execution. You do not need to ask the user to approve manually.
+2. STRUCTURED ANSWERS: Present deadlines, emails, schedules in clear markdown lists or tables.
+3. PERSONALITY: Direct, clear, academically focused. No emojis. Concise and practical.
+4. CLARIFICATION: If exam_date or course_code is missing for a study plan request, ask for it. Once you have it, immediately call the tool.
+
+You have these tools available:
+- list_calendar_events: Read calendar events
+- list_gmail_messages: Search Gmail
+- get_gmail_message: Read a specific email
+- list_drive_files: Search Drive files
+- create_study_plan: CREATE STUDY PLAN (call this for any study plan request)
+- create_calendar_event: Create a single calendar event
+- send_gmail_message: Send an email
+- create_gmail_draft: Save email as draft
+- create_drive_file: Save file to Drive
 """
 
 # Define Python functions representing the tools for Gemini's function calling schema
@@ -43,6 +61,37 @@ def get_gmail_message(message_id: str) -> dict:
 def list_drive_files(query: str = "", max_results: int = 5) -> list:
     """
     Searches and lists file names, mimeTypes, and modifications from the user's Google Drive.
+    """
+    pass
+
+def create_calendar_event(summary: str, start_time: str, end_time: str, description: str = "") -> dict:
+    """
+    Creates a new calendar event in Google Calendar. Parameters summary, start_time (ISO-8601 string), and end_time (ISO-8601 string) are required.
+    """
+    pass
+
+def send_gmail_message(to: str, subject: str, body: str) -> dict:
+    """
+    Sends an email to the specified recipient. Parameters to, subject, and body are required.
+    """
+    pass
+
+def create_gmail_draft(to: str, subject: str, body: str) -> dict:
+    """
+    Creates a draft email in Gmail. Parameters to, subject, and body are required.
+    """
+    pass
+
+def create_drive_file(filename: str, content: str, mime_type: str = "text/plain") -> dict:
+    """
+    Creates a new text or study file in Google Drive. Parameters filename and content are required.
+    """
+    pass
+
+def create_study_plan(exam_title: str, exam_date: str, course_code: str, hours_per_day: int = 2) -> dict:
+    """
+    Creates a day-by-day study plan leading up to an exam, checking calendar conflicts and scheduling study blocks.
+    Parameters exam_title, exam_date (YYYY-MM-DD), and course_code are required.
     """
     pass
 
@@ -123,7 +172,11 @@ class GeminiService:
             )
 
             # Keep track of active stream loop
-            tools = [list_calendar_events, list_gmail_messages, get_gmail_message, list_drive_files]
+            tools = [
+                list_calendar_events, list_gmail_messages, get_gmail_message, list_drive_files,
+                create_calendar_event, send_gmail_message, create_gmail_draft, create_drive_file,
+                create_study_plan
+            ]
             
             while True:
                 response = self.client.models.generate_content(
@@ -132,7 +185,12 @@ class GeminiService:
                     config=types.GenerateContentConfig(
                         system_instruction=SYSTEM_PROMPT,
                         tools=tools,
-                        temperature=0.7,
+                        temperature=0.1,
+                        tool_config=types.ToolConfig(
+                            function_calling_config=types.FunctionCallingConfig(
+                                mode="AUTO"
+                            )
+                        )
                     )
                 )
 
@@ -147,19 +205,98 @@ class GeminiService:
                         tool_name = call.name
                         tool_args = call.args
 
-                        # Notify frontend user of tool execution via stream text
-                        yield f"*(Executing tool: `{tool_name}` with parameters: {dict(tool_args)})*\n\n"
+                        # Intercept write tools — do NOT emit a text chunk for these;
+                        # they will be sent as a pending_action SSE event instead.
+                        write_tools = ["create_calendar_event", "send_gmail_message", "create_gmail_draft", "create_drive_file", "create_study_plan"]
+                        if tool_name in write_tools:
+                            action_id = f"act_{uuid.uuid4().hex[:8]}"
+                            
+                            mapped_action_type = ""
+                            description = ""
+                            args_payload = {}
+                            preview_payload = {}
+                            
+                            if tool_name == "create_calendar_event":
+                                mapped_action_type = "CREATE_CALENDAR_EVENTS"
+                                summary = tool_args.get("summary") or "Untitled Event"
+                                start_time = tool_args.get("start_time") or ""
+                                end_time = tool_args.get("end_time") or ""
+                                desc = tool_args.get("description", "")
+                                
+                                description = f"Create calendar event: {summary}"
+                                args_payload = {"events": [{"title": summary, "start": start_time, "end": end_time, "description": desc}]}
+                                preview_payload = {"events": [{"title": summary, "start": start_time, "end": end_time, "description": desc}]}
+                                
+                            elif tool_name == "create_study_plan":
+                                mapped_action_type = "CREATE_CALENDAR_EVENTS"
+                                proposed_events = await self._generate_study_plan_events(
+                                    exam_title=tool_args.get("exam_title"),
+                                    exam_date=tool_args.get("exam_date"),
+                                    course_code=tool_args.get("course_code"),
+                                    hours_per_day=tool_args.get("hours_per_day", 2),
+                                    google_service=google_service
+                                )
+                                mapped_evs = []
+                                for ev in proposed_events:
+                                    mapped_evs.append({
+                                        "title": ev.get("summary") or ev.get("title") or "Study Session",
+                                        "start": ev.get("start_time") or ev.get("start") or "",
+                                        "end": ev.get("end_time") or ev.get("end") or "",
+                                        "description": ev.get("description", "")
+                                    })
+                                description = f"Create study plan events for {tool_args.get('course_code')}"
+                                args_payload = {"events": mapped_evs}
+                                preview_payload = {"events": mapped_evs}
+                                
+                            elif tool_name == "send_gmail_message":
+                                mapped_action_type = "SEND_EMAIL"
+                                description = f"Send extension request email to {tool_args.get('to')}"
+                                args_payload = {"to": tool_args.get("to"), "subject": tool_args.get("subject"), "body": tool_args.get("body")}
+                                preview_payload = {"to": tool_args.get("to"), "subject": tool_args.get("subject"), "body": tool_args.get("body")}
+                                
+                            elif tool_name == "create_gmail_draft":
+                                mapped_action_type = "CREATE_DRAFT"
+                                description = f"Create draft email to {tool_args.get('to')}"
+                                args_payload = {"to": tool_args.get("to"), "subject": tool_args.get("subject"), "body": tool_args.get("body")}
+                                preview_payload = {"to": tool_args.get("to"), "subject": tool_args.get("subject"), "body": tool_args.get("body")}
+                                
+                            elif tool_name == "create_drive_file":
+                                mapped_action_type = "SAVE_TO_DRIVE"
+                                description = f"Save file {tool_args.get('filename')} to Google Drive"
+                                args_payload = {"filename": tool_args.get("filename"), "content": tool_args.get("content"), "mime_type": tool_args.get("mime_type", "text/plain")}
+                                preview_payload = {"filename": tool_args.get("filename"), "content": tool_args.get("content"), "mime_type": tool_args.get("mime_type", "text/plain")}
 
-                        # Execute local tool passing request context
-                        result = self._execute_tool(tool_name, tool_args, google_service, request)
-
-                        # Create function response object
-                        tool_parts.append(
-                            types.Part.from_function_response(
-                                name=tool_name,
-                                response={"result": result}
+                            # Store pending action in session
+                            if request:
+                                session = get_or_create_session(request)
+                                session["pending_actions"][action_id] = {
+                                    "action_type": mapped_action_type,
+                                    "description": description,
+                                    "args": args_payload,
+                                    "status": "pending"
+                                }
+                            
+                            # Send signal to client — MUST have \n\n so SSE frame is complete
+                            yield f"__pending_action__:{json.dumps({'action_id': action_id, 'action_type': mapped_action_type, 'description': description, 'preview': preview_payload})}"
+                            
+                            # Return pending response to Gemini
+                            tool_parts.append(
+                                types.Part.from_function_response(
+                                    name=tool_name,
+                                    response={"status": "pending_approval", "message": f"Action ID {action_id} created and awaiting user approval. Tell the user to approve."}
+                                )
                             )
-                        )
+                        else:
+                            # Execute local tool passing request context
+                            result = self._execute_tool(tool_name, tool_args, google_service, request)
+
+                            # Create function response object
+                            tool_parts.append(
+                                types.Part.from_function_response(
+                                    name=tool_name,
+                                    response={"result": result}
+                                )
+                            )
                     
                     # Append tool responses to content history and loop back to model
                     contents.append(types.Content(role="tool", parts=tool_parts))
@@ -177,6 +314,65 @@ class GeminiService:
 
         except Exception as e:
             yield f"\n\n[Error calling Gemini API: {str(e)}]\n\n"
+
+    async def _generate_study_plan_events(self, exam_title: str, exam_date: str, course_code: str, hours_per_day: int, google_service: GoogleApiService) -> list:
+        """
+        Generates proposed calendar study blocks avoiding conflicts.
+        """
+        events = google_service.list_calendar_events()
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d")
+        prompt = f"""
+        Design a day-by-day study plan for the exam: "{exam_title}" ({course_code}) scheduled on {exam_date}.
+        The current date is {now_str}.
+        The user wants to study {hours_per_day} hours per day.
+        
+        Existing Busy Calendar Events:
+        {json.dumps(events)}
+        
+        Schedule study sessions only in the remaining free slots, preferably in the evening (between 4 PM and 9 PM).
+        For each day from today until the day before the exam, generate a study block.
+        Avoid conflicts with any busy times in the existing calendar events list.
+        
+        Conform EXACTLY to this JSON format:
+        {{
+            "events": [
+                {{
+                    "summary": "[AcademeIQ] Study Block - {course_code}",
+                    "start_time": "ISO-8601-datetime-string",
+                    "end_time": "ISO-8601-datetime-string",
+                    "description": "Topics: Course review, problem solving"
+                }}
+            ]
+        }}
+        """
+        if self.is_mock:
+            now = datetime.datetime.now()
+            proposed_events = []
+            for i in range(1, 4):
+                day = now + datetime.timedelta(days=i)
+                start_iso = day.replace(hour=17, minute=0, second=0).isoformat()
+                end_iso = day.replace(hour=19, minute=0, second=0).isoformat()
+                proposed_events.append({
+                    "summary": f"[AcademeIQ] Study Block - {course_code}",
+                    "start_time": start_iso,
+                    "end_time": end_iso,
+                    "description": f"Topics: Course review, exam preparation session {i}"
+                })
+            return proposed_events
+        else:
+            response = self.client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.2
+                )
+            )
+            try:
+                data = json.loads(response.text)
+                return data.get("events", [])
+            except Exception:
+                return []
 
     def _execute_tool(self, name: str, args: dict, google_service: GoogleApiService, request: Request = None) -> dict:
         """
@@ -213,6 +409,31 @@ class GeminiService:
                 return google_service.list_drive_files(
                     query=args.get("query", ""),
                     max_results=args.get("max_results", 5)
+                )
+            elif name == "create_calendar_event":
+                return google_service.create_calendar_event(
+                    summary=args.get("summary"),
+                    start_time=args.get("start_time"),
+                    end_time=args.get("end_time"),
+                    description=args.get("description", "")
+                )
+            elif name == "send_gmail_message":
+                return google_service.send_gmail_message(
+                    to=args.get("to"),
+                    subject=args.get("subject"),
+                    body=args.get("body")
+                )
+            elif name == "create_gmail_draft":
+                return google_service.create_gmail_draft(
+                    to=args.get("to"),
+                    subject=args.get("subject"),
+                    body=args.get("body")
+                )
+            elif name == "create_drive_file":
+                return google_service.create_drive_file(
+                    filename=args.get("filename"),
+                    content=args.get("content"),
+                    mime_type=args.get("mime_type", "text/plain")
                 )
             return {"error": f"Tool '{name}' not found."}
         except Exception as e:
