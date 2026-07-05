@@ -95,6 +95,13 @@ def create_study_plan(exam_title: str, exam_date: str, course_code: str, hours_p
     """
     pass
 
+def schedule_focus_blocks(focus_blocks_json: str) -> dict:
+    """
+    Schedules multiple focus blocks or deep work sessions in the user's primary calendar in bulk.
+    Parameters focus_blocks_json (JSON string representing list of dicts with 'title', 'start', 'end', and optional 'description') is required.
+    """
+    pass
+
 class GeminiService:
     def __init__(self):
         self.api_key = os.getenv("GEMINI_API_KEY", "")
@@ -133,11 +140,17 @@ class GeminiService:
             
             # Log Mock Audit Actions
             if request:
+                session = get_or_create_session(request)
+                len_before = len(session["audit_log"])
                 if "deadline" in lower_msg:
                     log_audit_action(request, "READ_CALENDAR", "Retrieved upcoming classes and study blocks from Google Calendar (Mock)", status="auto", details="Requested mock calendar events")
                     log_audit_action(request, "READ_GMAIL", "Listed user emails with query: assignments/exams (Mock)", status="auto", details="Requested mock emails")
                 elif "file" in lower_msg:
                     log_audit_action(request, "READ_DRIVE", "Searched and listed user files on Google Drive (Mock)", status="auto", details="Requested mock files")
+                
+                # Yield any mock logs added
+                for entry in session["audit_log"][len_before:]:
+                    yield f"__audit_entry__:{json.dumps(entry)}\n\n"
 
             for key, val in mock_responses.items():
                 if key in lower_msg:
@@ -175,7 +188,7 @@ class GeminiService:
             tools = [
                 list_calendar_events, list_gmail_messages, get_gmail_message, list_drive_files,
                 create_calendar_event, send_gmail_message, create_gmail_draft, create_drive_file,
-                create_study_plan
+                create_study_plan, schedule_focus_blocks
             ]
             
             while True:
@@ -204,10 +217,9 @@ class GeminiService:
                     for call in response.function_calls:
                         tool_name = call.name
                         tool_args = call.args
-
                         # Intercept write tools — do NOT emit a text chunk for these;
                         # they will be sent as a pending_action SSE event instead.
-                        write_tools = ["create_calendar_event", "send_gmail_message", "create_gmail_draft", "create_drive_file", "create_study_plan"]
+                        write_tools = ["create_calendar_event", "send_gmail_message", "create_gmail_draft", "create_drive_file", "create_study_plan", "schedule_focus_blocks"]
                         if tool_name in write_tools:
                             action_id = f"act_{uuid.uuid4().hex[:8]}"
                             
@@ -248,6 +260,25 @@ class GeminiService:
                                 args_payload = {"events": mapped_evs}
                                 preview_payload = {"events": mapped_evs}
                                 
+                            elif tool_name == "schedule_focus_blocks":
+                                mapped_action_type = "CREATE_CALENDAR_EVENTS"
+                                focus_blocks_str = tool_args.get("focus_blocks_json") or "[]"
+                                try:
+                                    blocks = json.loads(focus_blocks_str)
+                                except Exception:
+                                    blocks = []
+                                mapped_evs = []
+                                for b in blocks:
+                                    mapped_evs.append({
+                                        "title": b.get("title") or b.get("summary") or "Focus Block",
+                                        "start": b.get("start") or b.get("start_time") or "",
+                                        "end": b.get("end") or b.get("end_time") or "",
+                                        "description": b.get("description", "")
+                                    })
+                                description = f"Schedule {len(mapped_evs)} focus blocks in Calendar"
+                                args_payload = {"events": mapped_evs}
+                                preview_payload = {"events": mapped_evs}
+
                             elif tool_name == "send_gmail_message":
                                 mapped_action_type = "SEND_EMAIL"
                                 description = f"Send extension request email to {tool_args.get('to')}"
@@ -277,7 +308,7 @@ class GeminiService:
                                 }
                             
                             # Send signal to client — MUST have \n\n so SSE frame is complete
-                            yield f"__pending_action__:{json.dumps({'action_id': action_id, 'action_type': mapped_action_type, 'description': description, 'preview': preview_payload})}"
+                            yield f"__pending_action__:{json.dumps({'action_id': action_id, 'action_type': mapped_action_type, 'description': description, 'preview': preview_payload})}\n\n"
                             
                             # Return pending response to Gemini
                             tool_parts.append(
@@ -288,7 +319,14 @@ class GeminiService:
                             )
                         else:
                             # Execute local tool passing request context
+                            session = get_or_create_session(request) if request else None
+                            len_before = len(session["audit_log"]) if session else 0
+                            
                             result = self._execute_tool(tool_name, tool_args, google_service, request)
+
+                            if session and len(session["audit_log"]) > len_before:
+                                for entry in session["audit_log"][len_before:]:
+                                    yield f"__audit_entry__:{json.dumps(entry)}\n\n"
 
                             # Create function response object
                             tool_parts.append(

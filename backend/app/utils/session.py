@@ -24,9 +24,9 @@ def get_or_create_session(request: Request) -> dict:
         }
     return SESSION_STORE[session_id]
 
-def log_audit_action(request: Request, action_type: str, description: str, status: str = "auto", details: str = ""):
+def log_audit_action(request: Request, action_type: str, description: str, status: str = "auto", details: str = "") -> dict:
     """
-    Appends a new event entry into the user's session audit log.
+    Appends a new event entry into the user's session audit log and returns it.
     """
     session = get_or_create_session(request)
     entry = {
@@ -39,3 +39,4 @@ def log_audit_action(request: Request, action_type: str, description: str, statu
         "details": details
     }
     session["audit_log"].append(entry)
+    return entry

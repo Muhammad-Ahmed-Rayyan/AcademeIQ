@@ -47,13 +47,17 @@ async def chat(request: Request, body: ChatRequest):
                 if chunk.startswith("__pending_action__:"):
                     try:
                         raw = chunk[len("__pending_action__:"):].strip()
-                        raw = raw.replace("\n", "").replace("\r", "").strip()
                         action_data = json.loads(raw)
-                        yield f"data: {json.dumps({'type': 'text', 'content': ''})}\n\n"
                         yield f"data: {json.dumps({'type': 'pending_action', **action_data})}\n\n"
-                        print(f"[SECURITY] Pending action sent to frontend: {action_data['action_id']} ({action_data['action_type']})")
                     except Exception as ex:
-                        print(f"Error parsing pending action packet: {ex} | raw={chunk[:200]}")
+                        print(f"Error parsing pending action packet: {ex}")
+                elif chunk.startswith("__audit_entry__:"):
+                    try:
+                        raw = chunk[len("__audit_entry__:"):].strip()
+                        entry_data = json.loads(raw)
+                        yield f"data: {json.dumps({'type': 'audit_entry', 'content': entry_data})}\n\n"
+                    except Exception as ex:
+                        print(f"Error parsing audit entry packet: {ex}")
                 else:
                     full_response += chunk
                     yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
@@ -108,7 +112,7 @@ async def confirm_action(request: Request, body: ConfirmActionRequest):
     
     if body.decision == "rejected":
         # User rejected the action
-        log_audit_action(
+        entry = log_audit_action(
             request, 
             action_type, 
             f"Cancelled execution of pending action: {action_type}", 
@@ -116,7 +120,7 @@ async def confirm_action(request: Request, body: ConfirmActionRequest):
             details=f"Parameters: {args}"
         )
         del pending_actions[body.action_id]
-        return {"status": "rejected", "message": "Action execution cancelled by user."}
+        return {"status": "rejected", "message": "Action execution cancelled by user.", "audit_entry": entry}
         
     # User approved - execute action
     try:
@@ -166,7 +170,7 @@ async def confirm_action(request: Request, body: ConfirmActionRequest):
             raise HTTPException(status_code=400, detail=f"Unsupported action type: {action_type}")
             
         # Log audit entry as approved (success)
-        log_audit_action(
+        entry = log_audit_action(
             request, 
             action_type, 
             f"Executed action: {action_type}", 
@@ -179,7 +183,7 @@ async def confirm_action(request: Request, body: ConfirmActionRequest):
         session["email_digest_cache"] = {"data": None, "timestamp": None}
         
         del pending_actions[body.action_id]
-        return {"status": "success", "message": "Action executed successfully.", "result": result}
+        return {"status": "success", "message": "Action executed successfully.", "result": result, "audit_entry": entry}
         
     except Exception as e:
         # Log audit entry as failed

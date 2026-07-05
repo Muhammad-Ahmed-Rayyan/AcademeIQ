@@ -1,33 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, ClipboardList, CheckCircle2, AlertTriangle, ArrowUpRight, Loader2 } from 'lucide-react';
-import { api } from '../store/authStore';
-
-interface AuditLogEntry {
-  id: string;
-  timestamp: string;
-  action_type: string;
-  description: string;
-  status: 'approved' | 'rejected' | 'auto';
-  category: 'read' | 'write';
-  details: string;
-}
+import { useAuditStore } from '../store/auditStore';
 
 export const AuditLog: React.FC = () => {
   const [activeFilter, setActiveFilter] = useState<'all' | 'read' | 'write' | 'rejected'>('all');
-  const [logs, setLogs] = useState<AuditLogEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const fetchLogs = async () => {
-    setLoading(true);
-    try {
-      const resp = await api.get('/api/audit');
-      setLogs(resp.data.entries || []);
-    } catch (err) {
-      console.error('Failed to fetch audit logs:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const { logs, loading, fetchLogs } = useAuditStore();
 
   useEffect(() => {
     fetchLogs();

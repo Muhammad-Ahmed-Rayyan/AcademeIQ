@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import { Send, Sparkles, MessageSquare, ShieldAlert, Trash2, Loader2, Shield, Check, X, Edit2 } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { useLocation } from 'react-router-dom';
+import { useAuditStore } from '../store/auditStore';
 
 interface Message {
   sender: 'user' | 'agent';
@@ -198,13 +199,15 @@ export const Chat: React.FC = () => {
                   return updated;
                 });
               } else if (payload.type === 'pending_action') {
-                console.log('MODAL TRIGGER:', payload); // ADD THIS
+                console.log('MODAL TRIGGER:', payload);
                 setPendingAction({
                   actionId: payload.action_id,
                   actionType: payload.action_type,
                   description: payload.description,
                   preview: payload.preview
                 });
+              } else if (payload.type === 'audit_entry') {
+                useAuditStore.getState().addLogEntry(payload.content);
               } else if (payload.type === 'done') {
                 // Done event
               } else if (payload.type === 'error') {
@@ -269,6 +272,9 @@ export const Chat: React.FC = () => {
       
       const data = await response.json();
       if (data.status === 'success' || data.status === 'rejected') {
+        if (data.audit_entry) {
+          useAuditStore.getState().addLogEntry(data.audit_entry);
+        }
         // Build a specific, meaningful toast
         let toastMsg = 'Action cancelled.';
         if (data.status === 'success') {

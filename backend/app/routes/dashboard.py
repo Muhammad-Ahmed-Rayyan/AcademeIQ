@@ -420,3 +420,220 @@ async def create_study_plan_endpoint(request: Request, body: StudyPlanRequest):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+class ExportBriefingRequest(BaseModel):
+    briefing: dict
+
+def format_briefing_markdown(briefing: dict) -> str:
+    md = "# AcademeIQ Weekly Academic Briefing\n\n"
+    md += f"Generated on: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+    
+    md += "## Upcoming Deadlines\n"
+    deadlines = briefing.get("deadlines", [])
+    if deadlines:
+        for dl in deadlines:
+            md += f"- **{dl.get('title')}** ({dl.get('subject', 'Academic')}) - Due: {dl.get('due_date')}\n"
+    else:
+        md += "_No upcoming deadlines._\n"
+    md += "\n"
+    
+    md += "## Email Action Items\n"
+    emails = briefing.get("email_actions", [])
+    if emails:
+        for em in emails:
+            md += f"- **From:** {em.get('sender')} | **Subject:** {em.get('subject')}\n  _Summary:_ {em.get('summary')}\n"
+    else:
+        md += "_No urgent academic email actions._\n"
+    md += "\n"
+    
+    md += "## Scheduled Study Sessions\n"
+    sessions = briefing.get("study_sessions", [])
+    if sessions:
+        for s in sessions:
+            md += f"- **{s.get('title')}** | Time: {s.get('start')} to {s.get('end')}\n"
+    else:
+        md += "_No scheduled study blocks._\n"
+    md += "\n"
+    
+    md += "## Weekly Goals\n"
+    goals = briefing.get("weekly_goals", [])
+    if goals:
+        for g in goals:
+            md += f"- [ ] {g}\n"
+    else:
+        md += "_No goals defined._\n"
+    md += "\n"
+    
+    md += "## Advisor Notes\n"
+    md += briefing.get("notes", "No advisor notes.")
+    md += "\n"
+    return md
+
+@router.get("/briefing")
+async def get_weekly_briefing(request: Request):
+    """
+    Fetches Google Calendar, Gmail, and Google Drive files and synthesizes them into an academic briefing.
+    """
+    try:
+        service = get_google_service(request)
+        log_audit_action(request, "GENERATE_BRIEFING", "Synthesized weekly academic briefing report", status="auto", details="Compiled Gmail, Calendar, and Drive data via Gemini")
+        
+        if service.is_mock:
+            # Return static mock data
+            now = datetime.datetime.now()
+            def relative_date(days_offset, hour=23, minute=59):
+                target = now + datetime.timedelta(days=days_offset)
+                return target.replace(hour=hour, minute=minute, second=0).isoformat()
+                
+            mock_briefing = {
+                "deadlines": [
+                    { "title": "Computer Vision Lab Report 2", "due_date": relative_date(2), "subject": "CS 461" },
+                    { "title": "Networks Presentation Slides", "due_date": relative_date(1), "subject": "CS 465" },
+                    { "title": "KBS Midterm Examination", "due_date": relative_date(6), "subject": "CS 463" }
+                ],
+                "email_actions": [
+                    { "sender": "Dr. Khalid Ahmed", "subject": "CS 461 — Lab Report Submission Deadline Extension", "summary": "The Computer Vision lab report submission deadline is extended to Saturday, July 4th at 11:59 PM." },
+                    { "sender": "Academic Registrar", "subject": "Midterm Examination Schedule Announcement", "summary": "Midterm examinations will start on Monday, July 6th, 2026. The KBS exam is scheduled for July 8th." }
+                ],
+                "study_sessions": [
+                    { "title": "Study Block - CS 463", "start": relative_date(1, 17, 0), "end": relative_date(1, 19, 0) },
+                    { "title": "Study Block - CS 461", "start": relative_date(2, 17, 0), "end": relative_date(2, 19, 0) }
+                ],
+                "weekly_goals": [
+                    "Complete CV Lab Report 2 before the Saturday deadline",
+                    "Finish drafting presentation slides for Networks and align with group teammates",
+                    "Attempt KBS past papers 2024 and 2025"
+                ],
+                "notes": "Ensure you get started on the Networks project slides early, as the presentation is next Monday and has multiple dependencies. The KBS exam is scheduled for next Wednesday; plan at least 2 sessions for mock papers."
+            }
+            return {"briefing": mock_briefing}
+            
+        else:
+            # Real mode - fetch and synthesize using Gemini
+            # Fetch calendar events (next 7 days)
+            events = service.list_calendar_events()
+            
+            # Fetch Gmail messages (last 7 days unread)
+            gmail_list = service.list_gmail_messages(query="is:unread", max_results=10)
+            emails = []
+            for msg in gmail_list[:5]:
+                try:
+                    full_msg = service.get_gmail_message(msg["id"])
+                    headers = full_msg.get("payload", {}).get("headers", [])
+                    subject = next((h["value"] for h in headers if h["name"].lower() == "subject"), "No Subject")
+                    sender = next((h["value"] for h in headers if h["name"].lower() == "from"), "Unknown")
+                    snippet = full_msg.get("snippet", "")
+                    emails.append({"id": msg["id"], "subject": subject, "sender": sender, "snippet": snippet})
+                except Exception:
+                    pass
+                    
+            # Fetch recent files (last 5 files)
+            drive_files = service.list_drive_files(max_results=5)
+            
+            # Synthesize via Gemini
+            from app.services.gemini import GeminiService
+            gemini = GeminiService()
+            
+            now_str = datetime.datetime.now().strftime("%Y-%m-%d")
+            prompt = f"""
+            You are AcademeIQ, a personal academic concierge. Synthesize a structured academic briefing for the user based on their Google account metadata for the next 7 days.
+            Today is {now_str}.
+            
+            Calendar Events:
+            {json.dumps(events)}
+            
+            Gmail Messages:
+            {json.dumps(emails)}
+            
+            Google Drive Files:
+            {json.dumps(drive_files)}
+            
+            Output a JSON object for the weekly briefing. Conforming EXACTLY to this JSON structure:
+            {{
+                "deadlines": [
+                    {{
+                        "title": "Assignment/Exam Title",
+                        "due_date": "ISO-8601-datetime-string",
+                        "subject": "Course Name/Code"
+                    }}
+                ],
+                "email_actions": [
+                    {{
+                        "sender": "Professor/Sender Name",
+                        "subject": "Email Subject",
+                        "summary": "Brief 1-sentence action-oriented summary of the email"
+                    }}
+                ],
+                "study_sessions": [
+                    {{
+                        "title": "Study block title",
+                        "start": "ISO-8601-datetime-string",
+                        "end": "ISO-8601-datetime-string"
+                    }}
+                ],
+                "weekly_goals": [
+                    "Actionable goal 1...",
+                    "Actionable goal 2..."
+                ],
+                "notes": "General advice or warnings about conflicts or constraints for the upcoming week"
+            }}
+            """
+            
+            from google.genai import types
+            import json
+            
+            response = gemini.client.models.generate_content(
+                model="gemini-2.0-flash-lite",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.2
+                )
+            )
+            
+            briefing_data = json.loads(response.text)
+            return {"briefing": briefing_data}
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/briefing/export")
+async def export_weekly_briefing(request: Request, body: ExportBriefingRequest):
+    """
+    Generates a Markdown file representation of the briefing and queues a SAVE_TO_DRIVE pending action.
+    """
+    try:
+        service = get_google_service(request)
+        md_content = format_briefing_markdown(body.briefing)
+        
+        date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+        filename = f"AcademeIQ_Weekly_Briefing_{date_str}.md"
+        
+        import uuid
+        action_id = f"act_{uuid.uuid4().hex[:8]}"
+        
+        # Store pending action in session
+        session = get_or_create_session(request)
+        session["pending_actions"][action_id] = {
+            "action_type": "SAVE_TO_DRIVE",
+            "description": f"Save Weekly Briefing to Google Drive as: {filename}",
+            "args": {
+                "filename": filename,
+                "content": md_content,
+                "mime_type": "text/markdown"
+            },
+            "status": "pending"
+        }
+        
+        return {
+            "action_id": action_id,
+            "action_type": "SAVE_TO_DRIVE",
+            "description": f"Save Weekly Briefing to Google Drive as: {filename}",
+            "preview": {
+                "filename": filename,
+                "content": md_content,
+                "mime_type": "text/markdown"
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

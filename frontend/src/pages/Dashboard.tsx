@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, AlertCircle, Mail, ClipboardList, BookOpen, Clock, ChevronRight } from 'lucide-react';
+import { Calendar, AlertCircle, Mail, ClipboardList, BookOpen, Clock, ChevronRight, Target, X, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../store/authStore';
+import { useAuditStore } from '../store/auditStore';
 import { TodaySchedule, ScheduleItem } from '../components/TodaySchedule';
 import { DeadlineCard, Deadline } from '../components/DeadlineCard';
 import { EmailDigestCard, EmailDigestItem } from '../components/EmailDigestCard';
+import { WeeklyBriefingCard } from '../components/WeeklyBriefingCard';
 
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -13,13 +15,47 @@ export const Dashboard: React.FC = () => {
   const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
   const [deadlines, setDeadlines] = useState<Deadline[]>([]);
   const [digest, setDigest] = useState<EmailDigestItem[]>([]);
-  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  
+  // Weekly briefing states
+  const [showBriefingModal, setShowBriefingModal] = useState(false);
+  const [briefingData, setBriefingData] = useState<any>(null);
+  const [loadingBriefing, setLoadingBriefing] = useState(false);
+  const [exportingBriefing, setExportingBriefing] = useState(false);
+  
+  const { logs: auditLogs, loading: loadingAudit, fetchLogs } = useAuditStore();
+
+  const handleFetchBriefing = async () => {
+    setLoadingBriefing(true);
+    setShowBriefingModal(true);
+    try {
+      const resp = await api.get('/api/briefing');
+      setBriefingData(resp.data.briefing);
+    } catch (err) {
+      console.error('Failed to load briefing:', err);
+    } finally {
+      setLoadingBriefing(false);
+    }
+  };
+
+  const handleExportBriefing = async () => {
+    if (!briefingData) return;
+    setExportingBriefing(true);
+    try {
+      await api.post('/api/briefing/export', { briefing: briefingData });
+      // Redirect to Chat to display confirmation modal immediately
+      navigate('/chat');
+    } catch (err) {
+      console.error('Failed to export briefing:', err);
+    } finally {
+      setExportingBriefing(false);
+      setShowBriefingModal(false);
+    }
+  };
 
   // Loading states
   const [loadingSchedule, setLoadingSchedule] = useState(true);
   const [loadingDeadlines, setLoadingDeadlines] = useState(true);
   const [loadingDigest, setLoadingDigest] = useState(true);
-  const [loadingAudit, setLoadingAudit] = useState(true);
 
   // Sync state
   const [lastSync, setLastSync] = useState<string>('Never');
@@ -59,14 +95,10 @@ export const Dashboard: React.FC = () => {
     }
 
     // Fetch audit logs
-    setLoadingAudit(true);
     try {
-      const resp = await api.get('/api/audit');
-      setAuditLogs(resp.data.entries || []);
+      await fetchLogs();
     } catch (err) {
       console.error('Error fetching audit logs:', err);
-    } finally {
-      setLoadingAudit(false);
     }
 
     setLastSync(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
@@ -98,6 +130,25 @@ export const Dashboard: React.FC = () => {
           <span>Last Sync: {lastSync}</span>
         </button>
       </div>
+
+      {/* Monday Briefing Alert */}
+      {new Date().getDay() === 1 && (
+        <div className="bg-primary/10 border border-primary/20 p-4 rounded-lg flex items-center justify-between gap-4 select-none animate-in slide-in-from-top duration-200">
+          <div className="flex items-center gap-3">
+            <Target className="w-5 h-5 text-primary flex-shrink-0" />
+            <div>
+              <h4 className="text-sm font-semibold text-text-primary">Monday Academic Briefing Ready</h4>
+              <p className="text-xs text-text-secondary leading-normal">AcademeIQ has compiled your weekly schedule, upcoming deadlines, and unread professor action items.</p>
+            </div>
+          </div>
+          <button
+            onClick={handleFetchBriefing}
+            className="px-3.5 py-1.5 bg-primary hover:bg-primary-hover text-white font-semibold text-xs rounded transition-colors duration-120 active:scale-95 flex-shrink-0"
+          >
+            View Briefing
+          </button>
+        </div>
+      )}
 
       {/* Grid Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -144,13 +195,13 @@ export const Dashboard: React.FC = () => {
             
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {[
-                { label: 'Get Weekly Briefing', prompt: 'Give me my weekly academic briefing' },
-                { label: 'Schedule Study Time', prompt: 'Help me find study time this week' },
-                { label: 'Check Deadlines', prompt: 'List all my upcoming academic deadlines' },
+                { label: 'Get Weekly Briefing', action: () => handleFetchBriefing() },
+                { label: 'Schedule Study Time', action: () => handleQuickAction('Help me find study time this week') },
+                { label: 'Check Deadlines', action: () => handleQuickAction('List all my upcoming academic deadlines') },
               ].map((action, i) => (
                 <button
                   key={i}
-                  onClick={() => handleQuickAction(action.prompt)}
+                  onClick={action.action}
                   className="p-3 text-left bg-border/10 hover:bg-border/35 border border-border rounded-md text-[13px] font-medium text-text-primary flex items-center justify-between group transition-all duration-150 active:scale-[0.98]"
                 >
                   <span>{action.label}</span>
@@ -274,6 +325,45 @@ export const Dashboard: React.FC = () => {
         </div>
 
       </div>
+
+      {/* Weekly Briefing Modal Overlay */}
+      {showBriefingModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="relative w-full max-w-4xl max-h-[90vh] flex flex-col bg-surface border border-border rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            {/* Modal Close Button */}
+            <button
+              onClick={() => setShowBriefingModal(false)}
+              className="absolute top-4 right-4 z-10 p-1.5 rounded-full bg-background/80 border border-border text-text-secondary hover:text-text-primary hover:bg-border/30 transition-colors duration-150"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            
+            {loadingBriefing ? (
+              <div className="flex flex-col items-center justify-center p-20 space-y-4">
+                <Loader2 className="w-10 h-10 text-primary animate-spin" />
+                <p className="text-xs text-text-secondary font-mono animate-pulse">ACADEMEIQ GENERATING YOUR BRIEFING...</p>
+              </div>
+            ) : briefingData ? (
+              <WeeklyBriefingCard
+                briefing={briefingData}
+                onExport={handleExportBriefing}
+                exporting={exportingBriefing}
+              />
+            ) : (
+              <div className="flex flex-col items-center justify-center p-20 space-y-4 text-center">
+                <AlertCircle className="w-10 h-10 text-danger" />
+                <p className="text-sm font-semibold text-text-primary">Failed to load weekly briefing</p>
+                <button
+                  onClick={handleFetchBriefing}
+                  className="px-4 py-2 bg-primary text-white font-semibold text-xs rounded hover:bg-primary-hover transition-colors"
+                >
+                  Try Again
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
