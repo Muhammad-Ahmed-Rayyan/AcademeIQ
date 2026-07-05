@@ -8,6 +8,7 @@ import { Dashboard } from './pages/Dashboard';
 import { Chat } from './pages/Chat';
 import { AuditLog } from './pages/AuditLog';
 import { Settings } from './pages/Settings';
+import { LandingPage } from './pages/LandingPage';
 
 export const App: React.FC = () => {
   const { checkAuth, isLoading } = useAuthStore();
@@ -28,27 +29,25 @@ export const App: React.FC = () => {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Public Route */}
+        {/* Public Routes */}
+        <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<Login />} />
 
         {/* Protected Routes inside Layout */}
         <Route
-          path="/"
           element={
             <ProtectedRoute>
               <Layout />
             </ProtectedRoute>
           }
         >
-          {/* Default redirect to Dashboard */}
-          <Route index element={<Navigate to="/dashboard" replace />} />
-          <Route path="dashboard" element={<Dashboard />} />
-          <Route path="chat" element={<Chat />} />
-          <Route path="audit" element={<AuditLog />} />
-          <Route path="settings" element={<Settings />} />
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/chat" element={<Chat />} />
+          <Route path="/audit" element={<AuditLog />} />
+          <Route path="/settings" element={<Settings />} />
         </Route>
 
-        {/* Catch all redirect to Dashboard/Login */}
+        {/* Catch all redirect to LandingPage */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

@@ -22,7 +22,7 @@ export const Dashboard: React.FC = () => {
   const [loadingBriefing, setLoadingBriefing] = useState(false);
   const [exportingBriefing, setExportingBriefing] = useState(false);
   
-  const { logs: auditLogs, loading: loadingAudit, fetchLogs } = useAuditStore();
+  const { logs: auditLogs, fetchLogs } = useAuditStore();
 
   const handleFetchBriefing = async () => {
     setLoadingBriefing(true);
@@ -56,51 +56,79 @@ export const Dashboard: React.FC = () => {
   const [loadingSchedule, setLoadingSchedule] = useState(true);
   const [loadingDeadlines, setLoadingDeadlines] = useState(true);
   const [loadingDigest, setLoadingDigest] = useState(true);
+  const [loadingAudit, setLoadingAudit] = useState(true);
+
+  // Error states
+  const [errorSchedule, setErrorSchedule] = useState(false);
+  const [errorDeadlines, setErrorDeadlines] = useState(false);
+  const [errorDigest, setErrorDigest] = useState(false);
+  const [errorAudit, setErrorAudit] = useState(false);
 
   // Sync state
   const [lastSync, setLastSync] = useState<string>('Never');
 
-  const fetchDashboardData = async (sync: boolean = false) => {
-    // Fetch schedule
+  const fetchSchedule = async () => {
     setLoadingSchedule(true);
+    setErrorSchedule(false);
     try {
       const resp = await api.get('/api/schedule/today');
       setSchedule(resp.data.schedule || []);
     } catch (err) {
       console.error('Error fetching schedule:', err);
+      setErrorSchedule(true);
     } finally {
       setLoadingSchedule(false);
     }
+  };
 
-    // Fetch deadlines
+  const fetchDeadlines = async (sync: boolean = false) => {
     setLoadingDeadlines(true);
+    setErrorDeadlines(false);
     try {
       const resp = await api.get(`/api/deadlines?sync=${sync}`);
       setDeadlines(resp.data.deadlines || []);
     } catch (err) {
       console.error('Error fetching deadlines:', err);
+      setErrorDeadlines(true);
     } finally {
       setLoadingDeadlines(false);
     }
+  };
 
-    // Fetch email digest
+  const fetchDigest = async (sync: boolean = false) => {
     setLoadingDigest(true);
+    setErrorDigest(false);
     try {
       const resp = await api.get(`/api/email-digest?sync=${sync}`);
       setDigest(resp.data.digest || []);
     } catch (err) {
       console.error('Error fetching email digest:', err);
+      setErrorDigest(true);
     } finally {
       setLoadingDigest(false);
     }
+  };
 
-    // Fetch audit logs
+  const fetchAudit = async () => {
+    setLoadingAudit(true);
+    setErrorAudit(false);
     try {
       await fetchLogs();
     } catch (err) {
       console.error('Error fetching audit logs:', err);
+      setErrorAudit(true);
+    } finally {
+      setLoadingAudit(false);
     }
+  };
 
+  const fetchDashboardData = async (sync: boolean = false) => {
+    await Promise.all([
+      fetchSchedule(),
+      fetchDeadlines(sync),
+      fetchDigest(sync),
+      fetchAudit()
+    ]);
     setLastSync(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
   };
 
@@ -181,6 +209,28 @@ export const Dashboard: React.FC = () => {
                   </div>
                 ))}
               </div>
+            ) : errorSchedule ? (
+              <div className="text-center py-8 bg-[#1A1D27]/40 border border-dashed border-danger/30 rounded-lg space-y-3 text-text-secondary select-none">
+                <AlertCircle className="w-8 h-8 mx-auto text-danger" />
+                <p className="text-xs text-text-primary">Failed to load schedule.</p>
+                <button
+                  onClick={fetchSchedule}
+                  className="px-3 py-1.5 bg-border hover:bg-border/60 border border-border text-xs rounded transition-all font-semibold active:scale-95 text-text-primary"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : schedule.length === 0 ? (
+              <div className="text-center py-8 bg-[#1A1D27]/40 border border-dashed border-[#2A2D3A] rounded-lg space-y-3 text-text-secondary select-none">
+                <Calendar className="w-8 h-8 mx-auto text-text-disabled" />
+                <p className="text-xs">No classes or study blocks scheduled for today.</p>
+                <button
+                  onClick={() => handleQuickAction('Help me find study time this week')}
+                  className="px-3 py-1.5 bg-border hover:bg-border/60 border border-border text-xs rounded transition-all font-semibold active:scale-95 text-text-primary"
+                >
+                  Schedule Study
+                </button>
+              </div>
             ) : (
               <TodaySchedule schedule={schedule} />
             )}
@@ -240,16 +290,33 @@ export const Dashboard: React.FC = () => {
                   </div>
                 ))}
               </div>
+            ) : errorDeadlines ? (
+              <div className="text-center py-6 bg-[#1A1D27]/40 border border-dashed border-danger/30 rounded-lg space-y-3 text-text-secondary select-none">
+                <AlertCircle className="w-8 h-8 mx-auto text-danger" />
+                <p className="text-xs text-text-primary px-4 leading-normal">Failed to load deadlines.</p>
+                <button
+                  onClick={() => fetchDeadlines()}
+                  className="px-3 py-1.5 bg-border hover:bg-border/60 border border-border text-xs rounded transition-all font-semibold active:scale-95 text-text-primary"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : deadlines.length === 0 ? (
+              <div className="text-center py-8 bg-[#1A1D27]/40 border border-dashed border-[#2A2D3A] rounded-lg space-y-3 text-text-secondary select-none">
+                <AlertCircle className="w-8 h-8 mx-auto text-text-disabled" />
+                <p className="text-xs text-center px-4 leading-normal">No deadlines found — add events to your Google Calendar to see them here.</p>
+                <button
+                  onClick={() => handleQuickAction('List all my upcoming academic deadlines')}
+                  className="px-3 py-1.5 bg-border hover:bg-border/60 border border-border text-xs rounded transition-all font-semibold active:scale-95 text-text-primary"
+                >
+                  Check Calendar
+                </button>
+              </div>
             ) : (
               <div className="space-y-3 max-h-[350px] overflow-y-auto pr-1">
                 {deadlines.map((dl) => (
                   <DeadlineCard key={dl.id} deadline={dl} />
                 ))}
-                {deadlines.length === 0 && (
-                  <div className="text-center py-6 text-xs text-text-secondary border border-dashed border-border rounded">
-                    No upcoming deadlines found.
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -277,16 +344,33 @@ export const Dashboard: React.FC = () => {
                   </div>
                 ))}
               </div>
+            ) : errorDigest ? (
+              <div className="text-center py-6 bg-[#1A1D27]/40 border border-dashed border-danger/30 rounded-lg space-y-3 text-text-secondary select-none">
+                <AlertCircle className="w-8 h-8 mx-auto text-danger" />
+                <p className="text-xs text-text-primary px-4 leading-normal">Failed to load email triage.</p>
+                <button
+                  onClick={() => fetchDigest()}
+                  className="px-3 py-1.5 bg-border hover:bg-border/60 border border-border text-xs rounded transition-all font-semibold active:scale-95 text-text-primary"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : digest.length === 0 ? (
+              <div className="text-center py-8 bg-[#1A1D27]/40 border border-dashed border-[#2A2D3A] rounded-lg space-y-3 text-text-secondary select-none">
+                <Mail className="w-8 h-8 mx-auto text-text-disabled" />
+                <p className="text-xs text-center px-4 leading-normal">No academic emails in unread logs.</p>
+                <button
+                  onClick={() => fetchDigest(true)}
+                  className="px-3 py-1.5 bg-border hover:bg-border/60 border border-border text-xs rounded transition-all font-semibold active:scale-95 text-text-primary"
+                >
+                  Check Gmail
+                </button>
+              </div>
             ) : (
               <div className="space-y-3 max-h-[350px] overflow-y-auto pr-1">
                 {digest.map((item) => (
                   <EmailDigestCard key={item.id} item={item} />
                 ))}
-                {digest.length === 0 && (
-                  <div className="text-center py-6 text-xs text-text-secondary border border-dashed border-border rounded">
-                    No academic emails in unread logs.
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -304,6 +388,28 @@ export const Dashboard: React.FC = () => {
                   <div className="h-6 bg-border/20 rounded animate-shimmer"></div>
                   <div className="h-6 bg-border/20 rounded animate-shimmer"></div>
                 </div>
+              ) : errorAudit ? (
+                <div className="text-center py-4 bg-[#1A1D27]/40 border border-dashed border-danger/30 rounded-lg space-y-3 text-text-secondary select-none font-sans">
+                  <AlertCircle className="w-8 h-8 mx-auto text-danger" />
+                  <p className="text-xs text-text-primary px-4 leading-normal">Failed to load activity log.</p>
+                  <button
+                    onClick={fetchAudit}
+                    className="px-3 py-1 bg-border hover:bg-border/60 border border-border text-xs rounded transition-all font-semibold active:scale-95 text-text-primary"
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : auditLogs.length === 0 ? (
+                <div className="text-center py-6 bg-[#1A1D27]/40 border border-dashed border-[#2A2D3A] rounded-lg space-y-3 text-text-secondary select-none font-sans">
+                  <ClipboardList className="w-8 h-8 mx-auto text-text-disabled" />
+                  <p className="text-xs text-center px-4 leading-normal">No activity logged in session.</p>
+                  <button
+                    onClick={() => navigate('/chat')}
+                    className="px-3 py-1 bg-border hover:bg-border/60 border border-border text-xs rounded transition-all font-semibold active:scale-95 text-text-primary"
+                  >
+                    Start Chatting
+                  </button>
+                </div>
               ) : (
                 auditLogs.slice(0, 3).map((log) => (
                   <div key={log.id} className="flex items-center justify-between p-2 bg-background border border-border rounded">
@@ -313,11 +419,6 @@ export const Dashboard: React.FC = () => {
                     </span>
                   </div>
                 ))
-              )}
-              {!loadingAudit && auditLogs.length === 0 && (
-                <div className="text-center py-4 text-xs text-text-secondary border border-dashed border-border rounded">
-                  No activity logged in session.
-                </div>
               )}
             </div>
           </div>

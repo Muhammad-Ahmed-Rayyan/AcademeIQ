@@ -142,7 +142,18 @@ export const Chat: React.FC = () => {
       });
 
       if (!response.ok) {
-        throw new Error(`Server returned status ${response.status}`);
+        let errorDetail = '';
+        try {
+          const errData = await response.json();
+          errorDetail = errData.detail || errData.message || JSON.stringify(errData);
+        } catch {
+          try {
+            errorDetail = await response.text();
+          } catch {
+            errorDetail = `HTTP ${response.status} ${response.statusText}`;
+          }
+        }
+        throw new Error(errorDetail || `HTTP error ${response.status}`);
       }
 
       const reader = response.body?.getReader();
@@ -199,7 +210,6 @@ export const Chat: React.FC = () => {
                   return updated;
                 });
               } else if (payload.type === 'pending_action') {
-                console.log('MODAL TRIGGER:', payload);
                 setPendingAction({
                   actionId: payload.action_id,
                   actionType: payload.action_type,
