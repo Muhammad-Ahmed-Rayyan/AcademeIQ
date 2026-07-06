@@ -162,16 +162,7 @@ export const Chat: React.FC = () => {
         throw new Error('Response body reader is not available');
       }
 
-      // Add a blank placeholder assistant message to fill during stream
-      const placeholderAgentMessage: Message = {
-        sender: 'agent',
-        text: '',
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      };
-
-      setMessages(prev => [...prev, placeholderAgentMessage]);
-      setIsTyping(false);
-
+      // Maintain isTyping=true to keep the bouncing dots active until first text chunk
       let buffer = '';
 
       while (true) {
@@ -197,7 +188,7 @@ export const Chat: React.FC = () => {
               
               if (payload.type === 'text') {
                 const chunkContent = payload.content;
-                // Append text chunk to the last assistant message
+                setIsTyping(false); // Remove dots bubble now that we have text content
                 setMessages(prev => {
                   const updated = [...prev];
                   const lastMsg = updated[updated.length - 1];
@@ -206,6 +197,12 @@ export const Chat: React.FC = () => {
                       ...lastMsg,
                       text: lastMsg.text + chunkContent
                     };
+                  } else {
+                    updated.push({
+                      sender: 'agent',
+                      text: chunkContent,
+                      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    });
                   }
                   return updated;
                 });
@@ -240,6 +237,7 @@ export const Chat: React.FC = () => {
           }
         }
       }
+      setIsTyping(false);
 
     } catch (error: any) {
       console.error('Streaming failed:', error);
@@ -422,7 +420,7 @@ export const Chat: React.FC = () => {
                 >
                   {msg.sender === 'agent' ? (
                     <div className="markdown-content">
-                      <ReactMarkdown>{msg.text || 'Thinking...'}</ReactMarkdown>
+                      <ReactMarkdown>{msg.text}</ReactMarkdown>
                     </div>
                   ) : (
                     <p className="whitespace-pre-line leading-relaxed">{msg.text}</p>

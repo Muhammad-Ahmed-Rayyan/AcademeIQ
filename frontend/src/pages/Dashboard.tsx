@@ -21,17 +21,21 @@ export const Dashboard: React.FC = () => {
   const [briefingData, setBriefingData] = useState<any>(null);
   const [loadingBriefing, setLoadingBriefing] = useState(false);
   const [exportingBriefing, setExportingBriefing] = useState(false);
+  const [briefingFailed, setBriefingFailed] = useState(false);
   
   const { logs: auditLogs, fetchLogs } = useAuditStore();
 
   const handleFetchBriefing = async () => {
     setLoadingBriefing(true);
     setShowBriefingModal(true);
+    setBriefingFailed(false);
     try {
       const resp = await api.get('/api/briefing');
       setBriefingData(resp.data.briefing);
     } catch (err) {
       console.error('Failed to load briefing:', err);
+      setBriefingFailed(true);
+      setShowBriefingModal(false);
     } finally {
       setLoadingBriefing(false);
     }
@@ -160,7 +164,7 @@ export const Dashboard: React.FC = () => {
       </div>
 
       {/* Monday Briefing Alert */}
-      {new Date().getDay() === 1 && (
+      {new Date().getDay() === 1 && !briefingFailed && (
         <div className="bg-primary/10 border border-primary/20 p-4 rounded-lg flex items-center justify-between gap-4 select-none animate-in slide-in-from-top duration-200">
           <div className="flex items-center gap-3">
             <Target className="w-5 h-5 text-primary flex-shrink-0" />
@@ -179,13 +183,12 @@ export const Dashboard: React.FC = () => {
       )}
 
       {/* Grid Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="space-y-6">
         
-        {/* Left Column (Main Schedule & Quick Actions) */}
-        <div className="lg:col-span-2 space-y-6">
-          
-          {/* Today's Schedule Card */}
-          <div className="bg-surface border border-border rounded-lg p-5 shadow-sm space-y-4">
+        {/* Row 1: Today's Schedule (60%) & Upcoming Deadlines (40%) */}
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+          {/* Today's Schedule Panel (60% width) */}
+          <div className="lg:col-span-3 bg-surface border border-border rounded-lg p-5 shadow-sm space-y-4">
             <div className="flex items-center justify-between select-none">
               <div className="flex items-center gap-2.5">
                 <Calendar className="w-5 h-5 text-primary" />
@@ -197,7 +200,6 @@ export const Dashboard: React.FC = () => {
             </div>
 
             {loadingSchedule ? (
-              // Skeleton loading for timeline
               <div className="space-y-4 pr-2">
                 {[1, 2].map((n) => (
                   <div key={n} className="flex gap-4 items-start p-3 bg-border/10 rounded border border-border/20">
@@ -236,38 +238,8 @@ export const Dashboard: React.FC = () => {
             )}
           </div>
 
-          {/* Quick Actions Card */}
-          <div className="bg-surface border border-border rounded-lg p-5 shadow-sm space-y-4 select-none">
-            <div className="flex items-center gap-2.5">
-              <BookOpen className="w-5 h-5 text-primary" />
-              <h2 className="text-base font-semibold text-text-primary">Quick Actions</h2>
-            </div>
-            
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {[
-                { label: 'Get Weekly Briefing', action: () => handleFetchBriefing() },
-                { label: 'Schedule Study Time', action: () => handleQuickAction('Help me find study time this week') },
-                { label: 'Check Deadlines', action: () => handleQuickAction('List all my upcoming academic deadlines') },
-              ].map((action, i) => (
-                <button
-                  key={i}
-                  onClick={action.action}
-                  className="p-3 text-left bg-border/10 hover:bg-border/35 border border-border rounded-md text-[13px] font-medium text-text-primary flex items-center justify-between group transition-all duration-150 active:scale-[0.98]"
-                >
-                  <span>{action.label}</span>
-                  <ChevronRight className="w-4 h-4 text-text-secondary group-hover:text-primary transition-colors duration-150" />
-                </button>
-              ))}
-            </div>
-          </div>
-
-        </div>
-
-        {/* Right Column (Deadlines & Emails Sidebar) */}
-        <div className="space-y-6">
-
-          {/* Upcoming Deadlines Panel */}
-          <div className="bg-surface border border-border rounded-lg p-5 shadow-sm space-y-4">
+          {/* Upcoming Deadlines Panel (40% width) */}
+          <div className="lg:col-span-2 bg-surface border border-border rounded-lg p-5 shadow-sm space-y-4">
             <div className="flex items-center justify-between select-none">
               <div className="flex items-center gap-2.5">
                 <AlertCircle className="w-5 h-5 text-warning" />
@@ -281,7 +253,6 @@ export const Dashboard: React.FC = () => {
             </div>
 
             {loadingDeadlines ? (
-              // Skeleton loaders
               <div className="space-y-3">
                 {[1, 2, 3].map((n) => (
                   <div key={n} className="p-3 bg-border/10 rounded border border-border/20 space-y-2">
@@ -313,16 +284,19 @@ export const Dashboard: React.FC = () => {
                 </button>
               </div>
             ) : (
-              <div className="space-y-3 max-h-[350px] overflow-y-auto pr-1">
+              <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
                 {deadlines.map((dl) => (
                   <DeadlineCard key={dl.id} deadline={dl} />
                 ))}
               </div>
             )}
           </div>
+        </div>
 
-          {/* Email Digest Panel */}
-          <div className="bg-surface border border-border rounded-lg p-5 shadow-sm space-y-4">
+        {/* Row 2: Email Triage (60%) & Audit Activity (40%) */}
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+          {/* Email Digest Panel (60% width) */}
+          <div className="lg:col-span-3 bg-surface border border-border rounded-lg p-5 shadow-sm space-y-4">
             <div className="flex items-center justify-between select-none">
               <div className="flex items-center gap-2.5">
                 <Mail className="w-5 h-5 text-primary" />
@@ -367,7 +341,7 @@ export const Dashboard: React.FC = () => {
                 </button>
               </div>
             ) : (
-              <div className="space-y-3 max-h-[350px] overflow-y-auto pr-1">
+              <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
                 {digest.map((item) => (
                   <EmailDigestCard key={item.id} item={item} />
                 ))}
@@ -375,8 +349,8 @@ export const Dashboard: React.FC = () => {
             )}
           </div>
 
-          {/* Recent Agent Activity */}
-          <div className="bg-surface border border-border rounded-lg p-5 shadow-sm space-y-4 select-none">
+          {/* Audit Activity (40% width) */}
+          <div className="lg:col-span-2 bg-surface border border-border rounded-lg p-5 shadow-sm space-y-4 select-none">
             <div className="flex items-center gap-2.5">
               <ClipboardList className="w-5 h-5 text-primary" />
               <h2 className="text-base font-semibold text-text-primary">Audit Activity</h2>
@@ -422,9 +396,32 @@ export const Dashboard: React.FC = () => {
               )}
             </div>
           </div>
-
         </div>
 
+        {/* Row 3: Quick Actions (full width) */}
+        <div className="bg-surface border border-border rounded-lg p-5 shadow-sm space-y-4 select-none w-full">
+          <div className="flex items-center gap-2.5">
+            <BookOpen className="w-5 h-5 text-primary" />
+            <h2 className="text-base font-semibold text-text-primary">Quick Actions</h2>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {[
+              { label: 'Get Weekly Briefing', action: () => handleFetchBriefing() },
+              { label: 'Schedule Study Time', action: () => handleQuickAction('Help me find study time this week') },
+              { label: 'Check Deadlines', action: () => handleQuickAction('List all my upcoming academic deadlines') },
+            ].map((action, i) => (
+              <button
+                key={i}
+                onClick={action.action}
+                className="p-3 text-left bg-border/10 hover:bg-border/35 border border-border rounded-md text-[13px] font-medium text-text-primary flex items-center justify-between group transition-all duration-150 active:scale-[0.98]"
+              >
+                <span>{action.label}</span>
+                <ChevronRight className="w-4 h-4 text-text-secondary group-hover:text-primary transition-colors duration-150" />
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Weekly Briefing Modal Overlay */}

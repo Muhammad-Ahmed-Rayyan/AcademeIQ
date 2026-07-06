@@ -90,13 +90,13 @@ export const LandingPage: React.FC = () => {
         .grid-pattern {
           background-size: 40px 40px;
           background-image:
-            linear-gradient(to right, rgba(79, 142, 247, 0.03) 1px, transparent 1px),
-            linear-gradient(to bottom, rgba(79, 142, 247, 0.03) 1px, transparent 1px);
+            linear-gradient(to right, rgba(79, 142, 247, 0.04) 1px, transparent 1px),
+            linear-gradient(to bottom, rgba(79, 142, 247, 0.04) 1px, transparent 1px);
         }
       `}</style>
 
-      {/* Navbar */}
-      <nav className="h-14 border-b border-[#2A2D3A] bg-[#0F1117] sticky top-0 z-50 px-6 flex items-center justify-between">
+      {/* Navbar - absolute overlay */}
+      <nav className="h-14 border-b border-[#2A2D3A] bg-[#0F1117]/85 backdrop-blur absolute top-0 left-0 w-full z-50 px-6 flex items-center justify-between">
         <div
           onClick={handleLogoClick}
           className="flex items-center gap-2.5 select-none cursor-pointer"
@@ -128,8 +128,8 @@ export const LandingPage: React.FC = () => {
         </button>
       </nav>
 
-      {/* Hero Section */}
-      <section className="relative h-[calc(100vh-56px)] w-full flex flex-col items-center justify-center overflow-hidden grid-pattern px-6">
+      {/* Hero Section - exactly 100vh height */}
+      <section className="relative h-screen w-full flex flex-col items-center justify-center overflow-hidden grid-pattern px-6 pt-14">
         {/* Pulsing glow behind the content */}
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-[#4F8EF7] rounded-full filter blur-[120px] pointer-events-none pulse-glow"></div>
 
@@ -202,7 +202,7 @@ export const LandingPage: React.FC = () => {
 
             {/* Card 2 */}
             <div className={`bg-[#1A1D27] border border-[#2A2D3A] rounded-lg p-6 space-y-4 hover:border-t-2 hover:border-t-[#4F8EF7] hover:translate-y-[-4px] hover:shadow-lg transition-all duration-150 group delay-[100ms] ${
-              visibleSections.capabilities ? 'opacity-100 translate-y-0 animate-in fade-in slide-in-from-bottom duration-300' : 'opacity-0 translate-y-4'
+              visibleSections.capabilities ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
             }`}>
               <div className="flex justify-between items-center select-none">
                 <div className="w-9 h-9 rounded bg-[#4F8EF7]/10 flex items-center justify-center border border-[#4F8EF7]/20">
@@ -218,7 +218,7 @@ export const LandingPage: React.FC = () => {
 
             {/* Card 3 */}
             <div className={`bg-[#1A1D27] border border-[#2A2D3A] rounded-lg p-6 space-y-4 hover:border-t-2 hover:border-t-[#4F8EF7] hover:translate-y-[-4px] hover:shadow-lg transition-all duration-150 group delay-[200ms] ${
-              visibleSections.capabilities ? 'opacity-100 translate-y-0 animate-in fade-in slide-in-from-bottom duration-500' : 'opacity-0 translate-y-4'
+              visibleSections.capabilities ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
             }`}>
               <div className="flex justify-between items-center select-none">
                 <div className="w-9 h-9 rounded bg-[#4F8EF7]/10 flex items-center justify-center border border-[#4F8EF7]/20">
@@ -229,6 +229,49 @@ export const LandingPage: React.FC = () => {
               <h3 className="text-sm font-bold text-[#F0F2F8]">Personalized Study Plans</h3>
               <p className="text-xs text-[#8B90A7] leading-relaxed">
                 Generate day-by-day study schedules that fit around your existing classes and commitments.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Powered By Section */}
+      <section className="py-12 border-t border-[#2A2D3A] bg-[#0F1117] text-center select-none">
+        <div className="max-w-5xl mx-auto px-6 space-y-4">
+          <div className="text-[10px] font-mono font-semibold tracking-widest text-[#4F8EF7] uppercase">
+            BUILT ON
+          </div>
+          <div className="flex flex-wrap justify-center gap-3">
+            {[
+              "Gemini 2.5 Flash",
+              "Google Calendar API",
+              "Gmail API",
+              "Google Drive API",
+              "FastAPI",
+              "React"
+            ].map((tech, i) => (
+              <span
+                key={i}
+                className="px-3.5 py-1.5 bg-[#1A1D27] border border-[#2A2D3A] rounded-full text-[11px] font-mono text-[#8B90A7]"
+              >
+                {tech}
+              </span>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Privacy First Section */}
+      <section className="py-12 border-t border-[#2A2D3A] bg-[#0F1117]">
+        <div className="max-w-5xl mx-auto px-6">
+          <div className="bg-[#1A1D27] border border-[#2A2D3A] rounded-lg p-8 flex flex-col md:flex-row items-center gap-6 shadow-md hover:border-[#4F8EF7]/30 transition-colors duration-150">
+            <div className="w-14 h-14 rounded-full bg-[#4F8EF7]/10 flex items-center justify-center border border-[#4F8EF7]/20 flex-shrink-0">
+              <Shield className="w-6 h-6 text-[#4F8EF7]" />
+            </div>
+            <div className="space-y-2 text-center md:text-left">
+              <h3 className="text-lg font-bold text-[#F0F2F8]">Your Data Never Leaves Your Google Account</h3>
+              <p className="text-xs text-[#8B90A7] leading-relaxed">
+                AcademeIQ operates statelessly. No student data is stored on external servers. Every read happens in memory, every write requires your explicit approval, and you can revoke access at any time from your Google account settings.
               </p>
             </div>
           </div>
@@ -251,7 +294,7 @@ export const LandingPage: React.FC = () => {
             <div className={`relative p-6 bg-[#1A1D27]/40 border border-[#2A2D3A] rounded-lg space-y-3 overflow-hidden select-none hover:border-[#4F8EF7]/30 transition-colors duration-150 ${
               visibleSections.howItWorks ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
             }`}>
-              <span className="text-[120px] font-mono font-bold text-white opacity-[0.02] absolute top-[-30px] right-[-10px] leading-none pointer-events-none select-none">
+              <span className="text-[120px] font-mono font-bold text-white opacity-[0.04] absolute top-[-30px] right-[-10px] leading-none pointer-events-none select-none">
                 01
               </span>
               <span className="text-[10px] font-mono text-[#4F8EF7] font-bold">STEP 01</span>
@@ -265,7 +308,7 @@ export const LandingPage: React.FC = () => {
             <div className={`relative p-6 bg-[#1A1D27]/40 border border-[#2A2D3A] rounded-lg space-y-3 overflow-hidden select-none hover:border-[#4F8EF7]/30 transition-colors duration-150 delay-[100ms] ${
               visibleSections.howItWorks ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
             }`}>
-              <span className="text-[120px] font-mono font-bold text-white opacity-[0.02] absolute top-[-30px] right-[-10px] leading-none pointer-events-none select-none">
+              <span className="text-[120px] font-mono font-bold text-white opacity-[0.04] absolute top-[-30px] right-[-10px] leading-none pointer-events-none select-none">
                 02
               </span>
               <span className="text-[10px] font-mono text-[#4F8EF7] font-bold">STEP 02</span>
@@ -279,7 +322,7 @@ export const LandingPage: React.FC = () => {
             <div className={`relative p-6 bg-[#1A1D27]/40 border border-[#2A2D3A] rounded-lg space-y-3 overflow-hidden select-none hover:border-[#4F8EF7]/30 transition-colors duration-150 delay-[200ms] ${
               visibleSections.howItWorks ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
             }`}>
-              <span className="text-[120px] font-mono font-bold text-white opacity-[0.02] absolute top-[-30px] right-[-10px] leading-none pointer-events-none select-none">
+              <span className="text-[120px] font-mono font-bold text-white opacity-[0.04] absolute top-[-30px] right-[-10px] leading-none pointer-events-none select-none">
                 03
               </span>
               <span className="text-[10px] font-mono text-[#4F8EF7] font-bold">STEP 03</span>
@@ -293,46 +336,46 @@ export const LandingPage: React.FC = () => {
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-[#2A2D3A] bg-[#0F1117] py-10 px-6 max-w-6xl mx-auto w-full select-none space-y-6">
-        {/* Row 1 */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div
-            onClick={handleLogoClick}
-            className="flex items-center gap-2 select-none cursor-pointer"
-          >
-            <div className="w-5 h-5">
-              <svg viewBox="0 0 24 24" fill="none" stroke="#4F8EF7" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="w-full h-full">
-                <path d="M2 10L12 5L22 10L12 15L2 10Z" />
-                <path d="M6 12.5V16C6 17.5 8.5 19 12 19C15.5 19 18 17.5 18 16V12.5" />
-                <circle cx="12" cy="12" r="1.5" fill="#4F8EF7" />
-                <circle cx="8" cy="10" r="1" fill="#4F8EF7" />
-                <circle cx="16" cy="10" r="1" fill="#4F8EF7" />
-                <circle cx="12" cy="16.5" r="1" fill="#4F8EF7" />
-                <path d="M12 12L8 10" strokeWidth="0.8" opacity="0.8" />
-                <path d="M12 12L16 10" strokeWidth="0.8" opacity="0.8" />
-                <path d="M12 12L12 16.5" strokeWidth="0.8" opacity="0.8" />
-                <path d="M22 10v6" />
-                <circle cx="22" cy="16.5" r="0.8" fill="#4F8EF7" />
-              </svg>
-            </div>
-            <span className="text-[14px] font-semibold text-[#F0F2F8] tracking-tight">AcademeIQ</span>
+      <footer className="border-t border-[#2A2D3A] bg-[#0F1117] py-6 px-6 max-w-6xl mx-auto w-full select-none flex flex-col sm:flex-row items-center justify-between gap-4">
+        {/* Left Logo */}
+        <div
+          onClick={handleLogoClick}
+          className="flex items-center gap-2 cursor-pointer"
+        >
+          <div className="w-5 h-5">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#4F8EF7" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="w-full h-full">
+              <path d="M2 10L12 5L22 10L12 15L2 10Z" />
+              <path d="M6 12.5V16C6 17.5 8.5 19 12 19C15.5 19 18 17.5 18 16V12.5" />
+              <circle cx="12" cy="12" r="1.5" fill="#4F8EF7" />
+              <circle cx="8" cy="10" r="1" fill="#4F8EF7" />
+              <circle cx="16" cy="10" r="1" fill="#4F8EF7" />
+              <circle cx="12" cy="16.5" r="1" fill="#4F8EF7" />
+              <path d="M12 12L8 10" strokeWidth="0.8" opacity="0.8" />
+              <path d="M12 12L16 10" strokeWidth="0.8" opacity="0.8" />
+              <path d="M12 12L12 16.5" strokeWidth="0.8" opacity="0.8" />
+              <path d="M22 10v6" />
+              <circle cx="22" cy="16.5" r="0.8" fill="#4F8EF7" />
+            </svg>
           </div>
-
-          <a
-            href="https://github.com/Muhammad-Ahmed-Rayyan/academeiq"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="w-8 h-8 rounded border border-[#2A2D3A] bg-[#1A1D27] flex items-center justify-center text-[#8B90A7] hover:text-[#4F8EF7] hover:border-[#4F8EF7] transition-all duration-150 active:scale-95"
-            aria-label="GitHub Repository"
-          >
-            <Github className="w-4 h-4" />
-          </a>
+          <span className="text-[14px] font-semibold text-[#F0F2F8] tracking-tight">AcademeIQ</span>
         </div>
 
-        {/* Row 2 */}
-        <div className="text-center text-[11px] sm:text-xs text-[#8B90A7] font-sans leading-relaxed border-t border-[#2A2D3A]/40 pt-6">
-          AcademeIQ is an open-source AI agent project built for the Kaggle 5-Day AI Agents Intensive Capstone 2026. Powered by Gemini 2.5 Flash, Google MCP Servers, and FastAPI.
-        </div>
+        {/* Center Text with HTML Entity support */}
+        <div 
+          className="text-[#8B90A7] text-[11px] font-sans text-center"
+          dangerouslySetInnerHTML={{ __html: '&copy; 2026 &middot; Powered by Gemini 2.5 Flash, Google MCP Servers, FastAPI' }}
+        />
+
+        {/* Right GitHub Icon */}
+        <a
+          href="https://github.com/Muhammad-Ahmed-Rayyan/academeiq"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="w-8 h-8 rounded border border-[#2A2D3A] bg-[#1A1D27] flex items-center justify-center text-[#8B90A7] hover:text-[#4F8EF7] hover:border-[#4F8EF7] transition-all duration-150 active:scale-95"
+          aria-label="GitHub Repository"
+        >
+          <Github className="w-4 h-4" />
+        </a>
       </footer>
     </div>
   );

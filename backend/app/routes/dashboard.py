@@ -1,5 +1,6 @@
 import datetime
 import re
+import json
 from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
 from app.services.google_api import GoogleApiService
@@ -511,91 +512,118 @@ async def get_weekly_briefing(request: Request):
         else:
             # Real mode - fetch and synthesize using Gemini
             # Fetch calendar events (next 7 days)
-            events = service.list_calendar_events()
+            try:
+                events = service.list_calendar_events()
+            except Exception:
+                events = []
             
             # Fetch Gmail messages (last 7 days unread)
-            gmail_list = service.list_gmail_messages(query="is:unread", max_results=10)
             emails = []
-            for msg in gmail_list[:5]:
-                try:
-                    full_msg = service.get_gmail_message(msg["id"])
-                    headers = full_msg.get("payload", {}).get("headers", [])
-                    subject = next((h["value"] for h in headers if h["name"].lower() == "subject"), "No Subject")
-                    sender = next((h["value"] for h in headers if h["name"].lower() == "from"), "Unknown")
-                    snippet = full_msg.get("snippet", "")
-                    emails.append({"id": msg["id"], "subject": subject, "sender": sender, "snippet": snippet})
-                except Exception:
-                    pass
+            try:
+                gmail_list = service.list_gmail_messages(query="is:unread", max_results=10)
+                for msg in gmail_list[:5]:
+                    try:
+                        full_msg = service.get_gmail_message(msg["id"])
+                        headers = full_msg.get("payload", {}).get("headers", [])
+                        subject = next((h["value"] for h in headers if h["name"].lower() == "subject"), "No Subject")
+                        sender = next((h["value"] for h in headers if h["name"].lower() == "from"), "Unknown")
+                        snippet = full_msg.get("snippet", "")
+                        emails.append({"id": msg["id"], "subject": subject, "sender": sender, "snippet": snippet})
+                    except Exception:
+                        pass
+            except Exception:
+                pass
                     
             # Fetch recent files (last 5 files)
-            drive_files = service.list_drive_files(max_results=5)
+            try:
+                drive_files = service.list_drive_files(max_results=5)
+            except Exception:
+                drive_files = []
             
             # Synthesize via Gemini
-            from app.services.gemini import GeminiService
-            gemini = GeminiService()
-            
-            now_str = datetime.datetime.now().strftime("%Y-%m-%d")
-            prompt = f"""
-            You are AcademeIQ, a personal academic concierge. Synthesize a structured academic briefing for the user based on their Google account metadata for the next 7 days.
-            Today is {now_str}.
-            
-            Calendar Events:
-            {json.dumps(events)}
-            
-            Gmail Messages:
-            {json.dumps(emails)}
-            
-            Google Drive Files:
-            {json.dumps(drive_files)}
-            
-            Output a JSON object for the weekly briefing. Conforming EXACTLY to this JSON structure:
-            {{
-                "deadlines": [
-                    {{
-                        "title": "Assignment/Exam Title",
-                        "due_date": "ISO-8601-datetime-string",
-                        "subject": "Course Name/Code"
-                    }}
-                ],
-                "email_actions": [
-                    {{
-                        "sender": "Professor/Sender Name",
-                        "subject": "Email Subject",
-                        "summary": "Brief 1-sentence action-oriented summary of the email"
-                    }}
-                ],
-                "study_sessions": [
-                    {{
-                        "title": "Study block title",
-                        "start": "ISO-8601-datetime-string",
-                        "end": "ISO-8601-datetime-string"
-                    }}
-                ],
-                "weekly_goals": [
-                    "Actionable goal 1...",
-                    "Actionable goal 2..."
-                ],
-                "notes": "General advice or warnings about conflicts or constraints for the upcoming week"
-            }}
-            """
-            
-            from google.genai import types
-            import json
-            
-            response = gemini.client.models.generate_content(
-                model="gemini-2.0-flash-lite",
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    temperature=0.2
+            try:
+                from app.services.gemini import GeminiService
+                gemini = GeminiService()
+                
+                now_str = datetime.datetime.now().strftime("%Y-%m-%d")
+                prompt = f"""
+                You are AcademeIQ, a personal academic concierge. Synthesize a structured academic briefing for the user based on their Google account metadata for the next 7 days.
+                Today is {now_str}.
+                
+                Calendar Events:
+                {json.dumps(events)}
+                
+                Gmail Messages:
+                {json.dumps(emails)}
+                
+                Google Drive Files:
+                {json.dumps(drive_files)}
+                
+                Output a JSON object for the weekly briefing. Conforming EXACTLY to this JSON structure:
+                {{
+                    "deadlines": [
+                        {{
+                            "title": "Assignment/Exam Title",
+                            "due_date": "ISO-8601-datetime-string",
+                            "subject": "Course Name/Code"
+                        }}
+                    ],
+                    "email_actions": [
+                        {{
+                            "sender": "Professor/Sender Name",
+                            "subject": "Email Subject",
+                            "summary": "Brief 1-sentence action-oriented summary of the email"
+                        }}
+                    ],
+                    "study_sessions": [
+                        {{
+                            "title": "Study block title",
+                            "start": "ISO-8601-datetime-string",
+                            "end": "ISO-8601-datetime-string"
+                        }}
+                    ],
+                    "weekly_goals": [
+                        "Actionable goal 1...",
+                        "Actionable goal 2..."
+                    ],
+                    "notes": "General advice or warnings about conflicts or constraints for the upcoming week"
+                }}
+                """
+                
+                from google.genai import types
+                
+                response = gemini.client.models.generate_content(
+                    model="gemini-2.0-flash-lite",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=0.2
+                    )
                 )
-            )
-            
-            briefing_data = json.loads(response.text)
-            return {"briefing": briefing_data}
+                
+                briefing_data = json.loads(response.text)
+                return {"briefing": briefing_data}
+            except Exception as e:
+                print(f"Gemini weekly briefing synthesis failed: {e}")
+                fallback_briefing = {
+                    "deadlines": [],
+                    "email_actions": [],
+                    "study_sessions": [],
+                    "weekly_goals": [],
+                    "notes": "No upcoming items found."
+                }
+                return {"briefing": fallback_briefing}
             
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"General weekly briefing error: {e}")
+        fallback_briefing = {
+            "deadlines": [],
+            "email_actions": [],
+            "study_sessions": [],
+            "weekly_goals": [],
+            "notes": "No upcoming items found."
+        }
+        return {"briefing": fallback_briefing}
 
 @router.post("/briefing/export")
 async def export_weekly_briefing(request: Request, body: ExportBriefingRequest):
